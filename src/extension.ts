@@ -239,15 +239,29 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
     }
     this.endpointMgr.initEndpoints();
     const endpointSelectionsSynced = this.normalizeSessionEndpointSelections();
-    if (
-      shouldPersistStartupState({
+    void this.finishStartup({
+      shouldPersistSessionState: shouldPersistStartupState({
         createdInitialSession,
         normalizedRestoredTasks,
         endpointSelectionsSynced,
-      })
-    ) {
-      void this.sessionMgr.saveState();
+      }),
+    });
+  }
+
+  private async finishStartup(options: { shouldPersistSessionState: boolean }) {
+    try {
+      await this.endpointMgr.initializeEndpointSecretsFromStorage();
+    } catch (error) {
+      this.outputChannel.appendLine(
+        `Endpoint secret migration failed: ${(error as Error).message}`,
+      );
     }
+    this.endpointMgr.initEndpoints();
+
+    if (options.shouldPersistSessionState) {
+      await this.sessionMgr.saveState();
+    }
+
     this.startEndpointHealthChecks();
     this.endpointMgr.initStatusBar(
       this.sessionMgr.sidebarSessionId,
@@ -766,8 +780,9 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
   /* ── Settings sidebar ── */
 
   private initializeSettingsWebview(webview: vscode.Webview) {
+    const nonce = getNonce();
     webview.options = { enableScripts: true };
-    webview.html = getSettingsHtml();
+    webview.html = getSettingsHtml(nonce);
     this.settingsWebview = webview;
     this.pushSettingsState();
 
@@ -793,12 +808,15 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
                   ? getXAIProviderName(rawName)
                 : (rawName || url);
             const endpoints = this.endpointMgr.getConfiguredEndpoints();
-            endpoints.push({ name, url, ...(apiKey ? { apiKey } : {}) });
+            endpoints.push({ name, url });
             await this.config.update(
               "endpoints",
               endpoints,
               vscode.ConfigurationTarget.Global,
             );
+            if (apiKey) {
+              await this.endpointMgr.setEndpointApiKey(url, apiKey);
+            }
             this.startEndpointHealthChecks();
             this.pushSettingsState();
             this.updateStatusBar();
@@ -828,6 +846,7 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
             const endpoints = existingEndpoints.filter(
               (ep) => normalizeEndpointInputUrl(ep.url) !== url,
             );
+            await this.endpointMgr.setEndpointApiKey(url, "");
             await this.config.update(
               "endpoints",
               endpoints.length ? endpoints : undefined,
@@ -993,7 +1012,7 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
           case "updateSetting": {
             const key = String(message.key || "");
             const value = message.value;
-            if (key) {
+            if (key === "includeWorkspaceContext") {
               await this.config.update(
                 key,
                 value,
@@ -1007,28 +1026,17 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
             const epUrl = normalizeEndpointInputUrl(String(message.url || ""));
             const key = String(message.key || "");
             const value = message.value;
-            if (epUrl && key) {
-              const endpoints = this.endpointMgr.getConfiguredEndpoints();
-              const ep = endpoints.find(
-                (e) => normalizeEndpointInputUrl(e.url) === epUrl,
+            if (epUrl && key === "apiKey") {
+              await this.endpointMgr.setEndpointApiKey(
+                epUrl,
+                String(value || ""),
               );
-              if (ep) {
-                (ep as any)[key] = value;
-                await this.config.update(
-                  "endpoints",
-                  endpoints,
-                  vscode.ConfigurationTarget.Global,
-                );
-                this.startEndpointHealthChecks();
-                if (
-                  this.endpointMgr.getResolvedActiveEndpointUrl() === epUrl &&
-                  (key === "apiKey" || key === "url")
-                ) {
-                  await this.refreshModels(epUrl);
-                  this.postState();
-                }
-                this.pushSettingsState();
+              this.startEndpointHealthChecks();
+              if (this.endpointMgr.getResolvedActiveEndpointUrl() === epUrl) {
+                await this.refreshModels(epUrl);
+                this.postState();
               }
+              this.pushSettingsState();
             }
             break;
           }
@@ -1068,7 +1076,9 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
         maxTokens: epConfig?.maxTokens ?? 4096,
         systemPrompt:
           epConfig?.systemPrompt ?? DEFAULT_SYSTEM_PROMPT,
-        apiKey: epConfig?.managed ? "" : epConfig?.apiKey ?? "",
+        apiKey: "",
+        apiKeySet:
+          !epConfig?.managed && this.endpointMgr.hasEndpointApiKey(health.url),
       };
     });
     this.settingsWebview.postMessage({

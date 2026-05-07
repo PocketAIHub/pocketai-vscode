@@ -26,6 +26,10 @@ import {
   applyRefreshedModelsToSessions,
   resolveActiveEndpointUrl,
 } from "./endpoint-workflows";
+import {
+  buildEndpointSecretMigration,
+  getEndpointApiKeySecretKey,
+} from "./endpoint-secrets";
 
 /**
  * ID prefixes for non-chat models (image gen, video gen, voice/TTS/STT).
@@ -41,7 +45,6 @@ const NON_CHAT_MODEL_PREFIXES = [
 ];
 
 const ACTIVE_ENDPOINT_STORAGE_KEY = "pocketai.activeEndpointUrl";
-
 /**
  * Extract a numeric parameter size from a model ID (e.g. "qwen3.5-9b" → 9).
  * Returns Infinity if no size is found so unknowns sort to the end.
@@ -72,6 +75,7 @@ export class EndpointManager {
   models: string[] = [];
   statusSummary = "status unavailable";
   private managedEndpointMap = new Map<string, EndpointConfig>();
+  private apiKeyByEndpoint = new Map<string, string>();
   private healthCheckTimer?: ReturnType<typeof setInterval>;
   private statusBarItem?: vscode.StatusBarItem;
 
@@ -165,7 +169,67 @@ export class EndpointManager {
   }
 
   getEndpointConfig(endpointUrl?: string): EndpointConfig {
-    return this.resolveEndpoint(endpointUrl || this.activeEndpointUrl).config;
+    const resolved = this.resolveEndpoint(endpointUrl || this.activeEndpointUrl);
+    const normalizedUrl = normalizeEndpointInputUrl(resolved.config.url);
+    return {
+      ...resolved.config,
+      apiKey: resolved.config.managed
+        ? resolved.config.apiKey
+        : this.getEndpointApiKey(normalizedUrl) || resolved.config.apiKey,
+    };
+  }
+
+  getEndpointApiKey(endpointUrl: string): string {
+    return this.apiKeyByEndpoint.get(normalizeEndpointInputUrl(endpointUrl)) ?? "";
+  }
+
+  hasEndpointApiKey(endpointUrl: string): boolean {
+    return Boolean(this.getEndpointApiKey(endpointUrl));
+  }
+
+  async setEndpointApiKey(endpointUrl: string, apiKey: string) {
+    const normalizedUrl = normalizeEndpointInputUrl(endpointUrl);
+    const trimmed = apiKey.trim();
+    const secretKey = getEndpointApiKeySecretKey(normalizedUrl);
+
+    if (trimmed) {
+      await this.context.secrets.store(secretKey, trimmed);
+      this.apiKeyByEndpoint.set(normalizedUrl, trimmed);
+      return;
+    }
+
+    await this.context.secrets.delete(secretKey);
+    this.apiKeyByEndpoint.delete(normalizedUrl);
+  }
+
+  async initializeEndpointSecretsFromStorage(): Promise<boolean> {
+    const endpoints = this.config.get<EndpointConfig[]>("endpoints") ?? [];
+    if (!endpoints.length) return false;
+
+    for (const endpoint of endpoints) {
+      const normalizedUrl = normalizeEndpointInputUrl(endpoint.url);
+      const storedSecret = await this.context.secrets.get(
+        getEndpointApiKeySecretKey(normalizedUrl),
+      );
+      if (storedSecret?.trim()) {
+        this.apiKeyByEndpoint.set(normalizedUrl, storedSecret.trim());
+      }
+    }
+
+    const migration = buildEndpointSecretMigration(endpoints);
+    for (const secret of migration.secrets) {
+      await this.setEndpointApiKey(secret.url, secret.apiKey);
+    }
+
+    if (migration.changed) {
+      await this.config.update(
+        "endpoints",
+        migration.endpoints,
+        vscode.ConfigurationTarget.Global,
+      );
+    }
+
+    return migration.changed;
   }
 
   getResolvedActiveEndpointUrl(): string {
@@ -275,7 +339,8 @@ export class EndpointManager {
         const ep = endpoints.find(
           (e) => normalizeEndpointInputUrl(e.url) === health.url,
         );
-        const apiKey = ep?.apiKey || "local-pocketai";
+        const apiKey =
+          this.getEndpointApiKey(health.url) || ep?.apiKey || "local-pocketai";
         const prevHealthy = health.healthy;
         const start = Date.now();
         const normalizedHealthUrl = normalizeEndpointInputUrl(health.url);

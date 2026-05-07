@@ -192,6 +192,31 @@ export function getChatScript(brandIconUri: string): string {
       return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
     }
 
+    function decodeBasicHtmlEntities(s) {
+      return String(s)
+        .replace(/&amp;/g, "&")
+        .replace(/&lt;/g, "<")
+        .replace(/&gt;/g, ">")
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'");
+    }
+
+    function escapeAttr(s) {
+      return escapeHtml(s).replace(/'/g, "&#39;");
+    }
+
+    function normalizeExternalHref(href) {
+      const decoded = decodeBasicHtmlEntities(href).trim();
+      try {
+        const url = new URL(decoded);
+        return url.protocol === "http:" || url.protocol === "https:"
+          ? url.href
+          : "";
+      } catch {
+        return "";
+      }
+    }
+
     function formatFileSize(bytes) {
       if (!bytes || bytes < 1024) return (bytes || 0) + " B";
       if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
@@ -416,10 +441,11 @@ export function getChatScript(brandIconUri: string): string {
       html = html.replace(/\\\`([^\\\`]+)\\\`/g, '<code>$1</code>');
       // Clickable file links: [label](path) — opens file in editor
       html = html.replace(/\\[([^\\]]+)\\]\\(([^)]+)\\)/g, function(_, label, href) {
-        if (/^https?:\\/\\//.test(href)) {
-          return '<a class="ext-link" href="' + href + '">' + label + '</a>';
+        const externalHref = normalizeExternalHref(href);
+        if (externalHref) {
+          return '<a class="ext-link" href="' + escapeAttr(externalHref) + '">' + label + '</a>';
         }
-        return '<a class="file-link" data-path="' + href.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, "\\"") + '" href="#">' + label + '</a>';
+        return '<a class="file-link" data-path="' + escapeAttr(decodeBasicHtmlEntities(href)) + '" href="#">' + label + '</a>';
       });
       // Blockquotes
       html = html.replace(/^&gt; (.+)$/gm, '<blockquote>$1</blockquote>');

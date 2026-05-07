@@ -396,7 +396,7 @@ export class ClaudeBridgeManager {
       existing.model = existing.model || "sonnet";
       existing.maxTokens = existing.maxTokens ?? 4096;
       existing.systemPrompt = existing.systemPrompt || defaultSystemPrompt;
-      existing.apiKey = "";
+      delete existing.apiKey;
       existing.reasoningEffort = "";
     } else {
       endpoints.push({
@@ -406,7 +406,6 @@ export class ClaudeBridgeManager {
         reasoningEffort: "",
         maxTokens: 4096,
         systemPrompt: defaultSystemPrompt,
-        apiKey: "",
       });
     }
 

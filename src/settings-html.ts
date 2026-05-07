@@ -1,8 +1,9 @@
-export function getSettingsHtml(): string {
+export function getSettingsHtml(nonce: string): string {
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}';">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <style>
   :root {
@@ -474,7 +475,7 @@ export function getSettingsHtml(): string {
 
   <div class="divider"></div>
 
-<script>
+<script nonce="${nonce}">
   const vscode = acquireVsCodeApi();
 
   const endpointsList = document.getElementById("endpointsList");
@@ -772,7 +773,10 @@ export function getSettingsHtml(): string {
       card.className = "endpoint-card" + (isActive ? " active" : "");
 
       const latency = ep.latencyMs ? ep.latencyMs + "ms" : "";
-      const epApiKey = ep.apiKey || "";
+      const epApiKeySet = !!ep.apiKeySet;
+      const apiKeyPlaceholder = epApiKeySet
+        ? "API key saved. Enter a new key to replace it."
+        : "Leave empty for local servers";
 
       // Header (always visible, click to expand/collapse)
       const header = document.createElement("div");
@@ -810,8 +814,11 @@ export function getSettingsHtml(): string {
         (isManagedEndpoint ? '' : '<div class="endpoint-settings">' +
           '<div class="setting-row">' +
             '<span class="setting-label">API Key</span>' +
-            '<input type="password" class="ep-api-key" value="' + escapeHtml(epApiKey) + '" placeholder="Leave empty for local servers" />' +
+            '<input type="password" class="ep-api-key" value="" placeholder="' + escapeHtml(apiKeyPlaceholder) + '" />' +
           '</div>' +
+          (epApiKeySet
+            ? '<div class="endpoint-actions"><button class="clear-key-btn">Clear API Key</button></div>'
+            : '') +
         '</div>');
 
       card.appendChild(body);
@@ -885,6 +892,15 @@ export function getSettingsHtml(): string {
       if (apiKeyInput) {
         apiKeyInput.addEventListener("change", (e) => {
           vscode.postMessage({ type: "updateEndpointSetting", url: ep.url, key: "apiKey", value: e.target.value });
+          e.target.value = "";
+        });
+      }
+
+      const clearKeyBtn = body.querySelector(".clear-key-btn");
+      if (clearKeyBtn) {
+        clearKeyBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          vscode.postMessage({ type: "updateEndpointSetting", url: ep.url, key: "apiKey", value: "" });
         });
       }
 

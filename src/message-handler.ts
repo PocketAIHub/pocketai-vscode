@@ -25,6 +25,7 @@ import {
   getInteractionModeStatus,
 } from "./chat-workflows";
 import { isInsidePath } from "./helpers";
+import { normalizeHttpExternalUrl } from "./external-links";
 
 export interface MessageHandlerDeps {
   sessionMgr: SessionManager;
@@ -336,8 +337,15 @@ export function setupChatMessageHandler(
 
         case "openExternal": {
           const url = message.url as string;
-          if (url) {
-            void vscode.env.openExternal(vscode.Uri.parse(url));
+          const normalizedUrl = normalizeHttpExternalUrl(url);
+          if (normalizedUrl) {
+            void vscode.env.openExternal(
+              vscode.Uri.parse(normalizedUrl, true),
+            );
+          } else if (url) {
+            void vscode.window.showWarningMessage(
+              "PocketAI only opens http and https links.",
+            );
           }
           return;
         }

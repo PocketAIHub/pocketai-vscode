@@ -121,8 +121,7 @@
               "model": { "type": "string", "default": "", "description": "Model ID to use with this endpoint. Leave empty to auto-detect." },
               "reasoningEffort": { "type": "string", "default": "", "description": "Optional reasoning effort for endpoints that support it, such as the Codex Bridge." },
               "maxTokens": { "type": "number", "default": 4096, "minimum": 128, "description": "Maximum completion tokens per reply for this endpoint." },
-              "systemPrompt": { "type": "string", "default": "You are a concise coding assistant inside VS Code.", "description": "System prompt for this endpoint." },
-              "apiKey": { "type": "string", "default": "", "description": "API key / bearer token for this endpoint. Leave empty for unauthenticated local servers." }
+              "systemPrompt": { "type": "string", "default": "You are a concise coding assistant inside VS Code.", "description": "System prompt for this endpoint." }
             }
           },
           "description": "List of PocketAI server endpoints with per-endpoint model, token, and prompt settings."

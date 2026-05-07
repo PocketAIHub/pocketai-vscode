@@ -159,6 +159,14 @@ const {
   resolveWorktreeSlashCommand,
 } = require("../dist/worktree-workflows.js");
 const {
+  buildEndpointSecretMigration,
+  getEndpointApiKeySecretKey,
+} = require("../dist/endpoint-secrets.js");
+const {
+  isHttpExternalUrl,
+  normalizeHttpExternalUrl,
+} = require("../dist/external-links.js");
+const {
   buildBackgroundTaskRestoreSnapshots,
   resolveExistingSessionId,
   shouldPersistStartupState,
@@ -182,6 +190,9 @@ const {
 const {
   getChatScript,
 } = require("../dist/chat-script.js");
+const {
+  getSettingsHtml,
+} = require("../dist/settings-html.js");
 
 function createSession(overrides = {}) {
   return {
@@ -2448,6 +2459,92 @@ test("xAI helpers normalize Grok endpoints and provide a friendly default name",
   assert.equal(getXAIProviderName(""), "Grok (xAI)");
   assert.equal(getXAIProviderName("https://api.x.ai/v1"), "Grok (xAI)");
   assert.equal(getXAIProviderName("My Grok"), "My Grok");
+});
+
+test("endpoint secret migration strips configured api keys and normalizes secret ids", () => {
+  const migration = buildEndpointSecretMigration([
+    {
+      name: "Grok",
+      url: "https://api.x.ai/v1",
+      apiKey: "  x-secret  ",
+      model: "grok-code-fast",
+    },
+    {
+      name: "Local",
+      url: "http://127.0.0.1:39457",
+      apiKey: "",
+    },
+    {
+      name: "OpenCode Go",
+      url: "https://opencode.ai/zen/go/v1/chat/completions",
+      apiKey: "go-secret",
+    },
+  ]);
+
+  assert.equal(migration.changed, true);
+  assert.deepEqual(migration.endpoints, [
+    {
+      name: "Grok",
+      url: "https://api.x.ai/v1",
+      model: "grok-code-fast",
+    },
+    {
+      name: "Local",
+      url: "http://127.0.0.1:39457",
+    },
+    {
+      name: "OpenCode Go",
+      url: "https://opencode.ai/zen/go/v1/chat/completions",
+    },
+  ]);
+  assert.deepEqual(migration.secrets, [
+    {
+      url: "https://api.x.ai",
+      apiKey: "x-secret",
+      secretKey: getEndpointApiKeySecretKey("https://api.x.ai"),
+    },
+    {
+      url: "https://opencode.ai/zen/go",
+      apiKey: "go-secret",
+      secretKey: getEndpointApiKeySecretKey("https://opencode.ai/zen/go"),
+    },
+  ]);
+
+  assert.equal(
+    getEndpointApiKeySecretKey("https://api.x.ai/v1/chat/completions"),
+    "pocketai.endpointApiKey.https://api.x.ai",
+  );
+});
+
+test("external link policy only allows http and https URLs", () => {
+  assert.equal(
+    normalizeHttpExternalUrl("https://Example.com/docs?q=PocketAI"),
+    "https://example.com/docs?q=PocketAI",
+  );
+  assert.equal(
+    normalizeHttpExternalUrl("http://localhost:3000/path"),
+    "http://localhost:3000/path",
+  );
+  assert.equal(isHttpExternalUrl("command:workbench.action.reloadWindow"), false);
+  assert.equal(isHttpExternalUrl("javascript:alert(1)"), false);
+  assert.equal(isHttpExternalUrl("file:///tmp/secret.txt"), false);
+  assert.equal(isHttpExternalUrl("not a url"), false);
+});
+
+test("settings webview uses a script nonce and does not render saved API keys", () => {
+  const html = getSettingsHtml("nonce-test");
+  assert.match(
+    html,
+    /Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-nonce-test';"/,
+  );
+  assert.match(html, /<script nonce="nonce-test">/);
+  assert.match(html, /const epApiKeySet = !!ep\.apiKeySet;/);
+  assert.match(
+    html,
+    /API key saved\. Enter a new key to replace it\./,
+  );
+  assert.doesNotMatch(html, /ep\.apiKey \|\|/);
+  assert.doesNotMatch(html, /value="' \+ escapeHtml\(epApiKey\)/);
 });
 
 test("chat webview script emits valid JavaScript", () => {

@@ -337,7 +337,7 @@ export class CodexBridgeManager {
       existing.maxTokens = existing.maxTokens ?? 4096;
       existing.reasoningEffort = existing.reasoningEffort ?? "";
       existing.systemPrompt = existing.systemPrompt || defaultSystemPrompt;
-      existing.apiKey = "";
+      delete existing.apiKey;
     } else {
       endpoints.push({
         name: CODEX_BRIDGE_NAME,
@@ -346,7 +346,6 @@ export class CodexBridgeManager {
         reasoningEffort: "",
         maxTokens: 4096,
         systemPrompt: defaultSystemPrompt,
-        apiKey: "",
       });
     }
 
