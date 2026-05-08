@@ -256,11 +256,15 @@
     "codex-bridge": "node ./scripts/codex-openai-bridge.mjs",
     "build": "tsc --project tsconfig.json",
     "typecheck": "tsc --project tsconfig.json --noEmit",
-    "test": "npm run build && node --test tests/*.test.cjs"
+    "test": "npm run test:unit",
+    "test:unit": "npm run build && node --test tests/*.test.cjs",
+    "test:extension": "npm run build && node ./tests/run-extension-tests.cjs",
+    "test:all": "npm run test:unit && npm run test:extension"
   },
   "devDependencies": {
     "@types/node": "24.3.1",
     "@types/vscode": "^1.96.0",
+    "@vscode/test-electron": "^2.5.2",
     "typescript": "5.8.3"
   }
 }
