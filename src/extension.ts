@@ -88,6 +88,7 @@ import {
   markChangeSetStatusForToolCall,
   markPendingDiffStatus,
   syncHarnessPendingState,
+  syncHarnessToolTimeline,
   upsertBackgroundTask,
 } from "./harness/state";
 import type { HarnessEvent } from "./harness/types";
@@ -190,6 +191,13 @@ export function activate(context: vscode.ExtensionContext) {
         "pocketai.test.approveToolCall",
         async (toolCallId: string) =>
           providerInstance?.approveTestToolCall(toolCallId, true),
+      ),
+    );
+    context.subscriptions.push(
+      vscode.commands.registerCommand(
+        "pocketai.test.rejectToolCall",
+        async (toolCallId: string) =>
+          providerInstance?.approveTestToolCall(toolCallId, false),
       ),
     );
   }
@@ -1349,8 +1357,10 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
     if (approved) {
       if (this.isPendingEditStale(session, tc)) {
         markPendingDiffStatus(session, tc.id, "stale");
+        clearPendingToolState(session, tc.id);
         applyStaleToolCallResult(tc, session.transcript);
         markChangeSetStatusForToolCall(session, tc.id);
+        syncHarnessToolTimeline(session);
         this.inlineDiffMgr.clearChange(tc.id);
         return;
       }
@@ -1372,6 +1382,7 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
     clearPendingToolState(session, tc.id);
     applyRejectedToolCallResult(tc, session.transcript);
     markChangeSetStatusForToolCall(session, tc.id);
+    syncHarnessToolTimeline(session);
   }
 
   private isPendingEditStale(

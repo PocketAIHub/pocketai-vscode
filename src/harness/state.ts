@@ -178,6 +178,10 @@ export function syncHarnessPendingState(session: ChatSession) {
   syncToolTimelineFromTranscript(session);
 }
 
+export function syncHarnessToolTimeline(session: ChatSession) {
+  syncToolTimelineFromTranscript(session);
+}
+
 function syncToolTimelineFromTranscript(session: ChatSession) {
   for (const entry of session.transcript) {
     if (!entry.toolCalls?.length) continue;

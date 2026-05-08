@@ -22,6 +22,7 @@ const EXPECTED_TEST_COMMANDS = [
   "pocketai.test.getSidebarSession",
   "pocketai.test.setMode",
   "pocketai.test.approveToolCall",
+  "pocketai.test.rejectToolCall",
 ];
 
 async function resetPocketAiConfig() {
@@ -110,6 +111,8 @@ async function run() {
     await assertSlashCommandRoundTrip(fakeEndpoint);
     await assertStructuredToolActionRoundTrip();
     await assertEditApprovalVisualStateRoundTrip();
+    await assertEditRejectionVisualStateRoundTrip();
+    await assertStaleEditVisualStateRoundTrip();
   } finally {
     await resetPocketAiConfig();
     await fakeEndpoint.close();
@@ -344,6 +347,149 @@ async function assertEditApprovalVisualStateRoundTrip() {
   );
 }
 
+async function assertEditRejectionVisualStateRoundTrip() {
+  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+  assert(workspaceFolder, "Expected an extension-test workspace folder.");
+  const editableUri = vscode.Uri.joinPath(
+    workspaceFolder.uri,
+    "reject-target.js",
+  );
+  await vscode.workspace.fs.writeFile(
+    editableUri,
+    Buffer.from("export const rejected = 1;\n", "utf8"),
+  );
+  await vscode.commands.executeCommand("pocketai.test.setMode", "ask");
+
+  const pendingSnapshot = await sendTestPrompt(
+    "Exercise edit rejection visual coverage by updating reject-target.js.",
+  );
+  const editTool = getPendingEditTool(pendingSnapshot, "reject-target.js");
+  assert(
+    pendingSnapshot.harnessState.pendingDiffs.some(
+      (diff) => diff.toolCallId === editTool.id && diff.status === "pending",
+    ),
+    "Expected a pending diff before rejecting the edit.",
+  );
+
+  await vscode.commands.executeCommand("pocketai.test.rejectToolCall", editTool.id);
+  const rejectedSnapshot = await waitForSessionSnapshot(
+    (snapshot) =>
+      /Edit rejection coverage complete/.test(lastTranscriptContent(snapshot)),
+    "rejected edit flow to finish with a final response",
+  );
+
+  const finalFile = Buffer.from(
+    await vscode.workspace.fs.readFile(editableUri),
+  ).toString("utf8");
+  assert.equal(finalFile, "export const rejected = 1;\n");
+  assert.equal(rejectedSnapshot.harnessState.pendingApprovals.length, 0);
+  assert(
+    rejectedSnapshot.harnessState.pendingDiffs.some(
+      (diff) => diff.toolCallId === editTool.id && diff.status === "rejected",
+    ),
+    "Expected the pending diff to be marked rejected.",
+  );
+  assert(
+    rejectedSnapshot.harnessState.changeSets.some(
+      (changeSet) =>
+        changeSet.toolCallIds.includes(editTool.id) &&
+        changeSet.status === "rejected",
+    ),
+    "Expected the change set to be marked rejected.",
+  );
+  assert(
+    rejectedSnapshot.harnessState.toolTimeline.some(
+      (item) => item.toolCallId === editTool.id && item.status === "rejected",
+    ),
+    "Expected the Activity timeline to show the rejected edit.",
+  );
+}
+
+async function assertStaleEditVisualStateRoundTrip() {
+  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+  assert(workspaceFolder, "Expected an extension-test workspace folder.");
+  const editableUri = vscode.Uri.joinPath(
+    workspaceFolder.uri,
+    "stale-target.js",
+  );
+  await vscode.workspace.fs.writeFile(
+    editableUri,
+    Buffer.from("export const stale = 1;\n", "utf8"),
+  );
+  await vscode.commands.executeCommand("pocketai.test.setMode", "ask");
+
+  const pendingSnapshot = await sendTestPrompt(
+    "Exercise stale edit visual coverage by updating stale-target.js.",
+  );
+  const editTool = getPendingEditTool(pendingSnapshot, "stale-target.js");
+  const document = await vscode.workspace.openTextDocument(editableUri);
+  const editor = await vscode.window.showTextDocument(document, { preview: false });
+  const fullRange = new vscode.Range(
+    document.positionAt(0),
+    document.positionAt(document.getText().length),
+  );
+  await editor.edit((edit) => {
+    edit.replace(fullRange, "export const stale = 42;\n");
+  });
+  await document.save();
+
+  await vscode.commands.executeCommand("pocketai.test.approveToolCall", editTool.id);
+  const staleSnapshot = await waitForSessionSnapshot(
+    (snapshot) =>
+      /Stale edit coverage complete/.test(lastTranscriptContent(snapshot)),
+    "stale edit flow to finish with a final response",
+  );
+
+  const finalFile = Buffer.from(
+    await vscode.workspace.fs.readFile(editableUri),
+  ).toString("utf8");
+  assert.equal(finalFile, "export const stale = 42;\n");
+  assert.equal(staleSnapshot.harnessState.pendingApprovals.length, 0);
+  assert(
+    staleSnapshot.harnessState.pendingDiffs.some(
+      (diff) => diff.toolCallId === editTool.id && diff.status === "stale",
+    ),
+    "Expected the pending diff to be marked stale.",
+  );
+  assert(
+    staleSnapshot.harnessState.changeSets.some(
+      (changeSet) =>
+        changeSet.toolCallIds.includes(editTool.id) &&
+        changeSet.status === "stale",
+    ),
+    "Expected the change set to be marked stale.",
+  );
+  assert(
+    staleSnapshot.harnessState.toolTimeline.some(
+      (item) => item.toolCallId === editTool.id && item.status === "stale",
+    ),
+    "Expected the Activity timeline to show the stale edit.",
+  );
+}
+
+function getPendingEditTool(snapshot, filePath) {
+  const assistantActionEntry = snapshot.transcript.find(
+    (entry) =>
+      entry.assistantAction?.kind === "tool_action" &&
+      entry.toolCalls?.some(
+        (toolCall) =>
+          toolCall.type === "edit_file" &&
+          toolCall.filePath === filePath &&
+          toolCall.status === "pending",
+      ),
+  );
+  assert(
+    assistantActionEntry,
+    `Expected an assistant action entry with a pending edit for ${filePath}.`,
+  );
+  const editTool = assistantActionEntry.toolCalls.find(
+    (toolCall) => toolCall.type === "edit_file" && toolCall.filePath === filePath,
+  );
+  assert(editTool, `Expected a pending edit_file call for ${filePath}.`);
+  assert.equal(editTool.status, "pending");
+  return editTool;
+}
+
 async function sendTestPrompt(prompt) {
   const snapshot = await vscode.commands.executeCommand(
     "pocketai.test.sendPrompt",
@@ -447,6 +593,38 @@ function sendSseChatResponse(response, body) {
   });
   const serializedMessages = JSON.stringify(body.messages);
   if (
+    /Exercise stale edit visual coverage/.test(serializedMessages) &&
+    /pending edit no longer matches the current file contents/.test(serializedMessages)
+  ) {
+    sendTextChatResponse(response, "Stale edit coverage complete.");
+    return;
+  }
+  if (/Exercise stale edit visual coverage/.test(serializedMessages)) {
+    sendStructuredEditFileToolCalls(response, {
+      idPrefix: "stale",
+      path: "stale-target.js",
+      oldString: "export const stale = 1;",
+      newString: "export const stale = 2;",
+    });
+    return;
+  }
+  if (
+    /Exercise edit rejection visual coverage/.test(serializedMessages) &&
+    /User rejected this change/.test(serializedMessages)
+  ) {
+    sendTextChatResponse(response, "Edit rejection coverage complete.");
+    return;
+  }
+  if (/Exercise edit rejection visual coverage/.test(serializedMessages)) {
+    sendStructuredEditFileToolCalls(response, {
+      idPrefix: "reject",
+      path: "reject-target.js",
+      oldString: "export const rejected = 1;",
+      newString: "export const rejected = 2;",
+    });
+    return;
+  }
+  if (
     /Exercise edit approval visual coverage/.test(serializedMessages) &&
     /Successfully edited `editable-target\.js`/.test(serializedMessages)
   ) {
@@ -454,7 +632,12 @@ function sendSseChatResponse(response, body) {
     return;
   }
   if (/Exercise edit approval visual coverage/.test(serializedMessages)) {
-    sendStructuredEditFileToolCalls(response);
+    sendStructuredEditFileToolCalls(response, {
+      idPrefix: "approve",
+      path: "editable-target.js",
+      oldString: "export const value = 1;",
+      newString: "export const value = 2;",
+    });
     return;
   }
   if (
@@ -555,7 +738,10 @@ function sendStructuredReadFileToolCall(response) {
   response.end();
 }
 
-function sendStructuredEditFileToolCalls(response) {
+function sendStructuredEditFileToolCalls(
+  response,
+  { idPrefix, path, oldString, newString },
+) {
   response.write(
     `data: ${JSON.stringify({
       model: "pocketai-test-model",
@@ -566,7 +752,7 @@ function sendStructuredEditFileToolCalls(response) {
             tool_calls: [
               {
                 index: 0,
-                id: "call_read_editable",
+                id: `call_read_${idPrefix}`,
                 type: "function",
                 function: {
                   name: "read_file",
@@ -575,7 +761,7 @@ function sendStructuredEditFileToolCalls(response) {
               },
               {
                 index: 1,
-                id: "call_edit_editable",
+                id: `call_edit_${idPrefix}`,
                 type: "function",
                 function: {
                   name: "edit_file",
@@ -601,7 +787,7 @@ function sendStructuredEditFileToolCalls(response) {
                 index: 0,
                 function: {
                   arguments: JSON.stringify({
-                    path: "editable-target.js",
+                    path,
                     limit: 20,
                   }),
                 },
@@ -610,9 +796,9 @@ function sendStructuredEditFileToolCalls(response) {
                 index: 1,
                 function: {
                   arguments: JSON.stringify({
-                    path: "editable-target.js",
-                    old_string: "export const value = 1;",
-                    new_string: "export const value = 2;",
+                    path,
+                    old_string: oldString,
+                    new_string: newString,
                   }),
                 },
               },
