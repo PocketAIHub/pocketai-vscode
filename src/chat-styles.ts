@@ -1164,6 +1164,35 @@ export function getChatStyles(): string {
       padding: 6px 8px;
     }
 
+    .harness-activity-card {
+      border-color: rgba(78,201,176,0.14);
+    }
+
+    .harness-timeline-list {
+      gap: 6px;
+    }
+
+    .harness-timeline-row.running .harness-task-command,
+    .harness-timeline-row.pending_approval .harness-task-command,
+    .harness-timeline-row.detected .harness-task-command {
+      color: var(--fg);
+    }
+
+    .harness-timeline-row.failed .harness-task-command,
+    .harness-timeline-row.stale .harness-task-command {
+      color: var(--error);
+    }
+
+    .harness-timeline-command {
+      font-family: var(--font-sans);
+      font-size: 12px;
+    }
+
+    .harness-timeline-preview {
+      max-height: 120px;
+      overflow: hidden;
+    }
+
     .harness-health-list {
       display: flex;
       flex-direction: column;

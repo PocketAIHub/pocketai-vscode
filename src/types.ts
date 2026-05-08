@@ -139,6 +139,34 @@ export type HarnessTodoItem = {
   status: "pending" | "in_progress" | "completed";
 };
 
+export type HarnessToolTimelineStatus =
+  | "detected"
+  | "pending_approval"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "rejected"
+  | "stale";
+
+export type HarnessToolTimelineItem = {
+  id: string;
+  toolCallId: string;
+  toolType: string;
+  label: string;
+  target: string;
+  status: HarnessToolTimelineStatus;
+  filePath?: string;
+  command?: string;
+  url?: string;
+  query?: string;
+  resultPreview?: string;
+  commandRisk?: string;
+  startedAt?: number;
+  completedAt?: number;
+  createdAt: number;
+  updatedAt: number;
+};
+
 export type HarnessBackgroundTaskStatus =
   | "running"
   | "completed"
@@ -181,6 +209,7 @@ export type HarnessSessionState = {
   pendingDiffs: HarnessPendingDiff[];
   changeSets: HarnessChangeSet[];
   todoItems: HarnessTodoItem[];
+  toolTimeline: HarnessToolTimelineItem[];
   backgroundTasks: HarnessBackgroundTask[];
   subagentTasks: HarnessSubagentTask[];
 };

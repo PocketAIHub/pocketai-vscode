@@ -95,17 +95,17 @@ export class HarnessRunner {
         return { stoppedBecause: "completed", turnsCompleted: turn + 1 };
       }
 
+      const lastEntry = session.transcript[session.transcript.length - 1];
+      if (lastEntry) {
+        lastEntry.toolCalls = assistantTurn.toolCalls;
+      }
+
       emitHarnessEvent(
         this.deps.onHarnessEvent,
         createHarnessEvent(session.id, "tool_calls_detected", {
           detail: String(assistantTurn.toolCalls.length),
         }),
       );
-
-      const lastEntry = session.transcript[session.transcript.length - 1];
-      if (lastEntry) {
-        lastEntry.toolCalls = assistantTurn.toolCalls;
-      }
 
       const repeatedToolOutcome = this.detectRepeatedToolCalls(
         session,

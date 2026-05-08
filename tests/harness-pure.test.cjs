@@ -215,6 +215,7 @@ function createSession(overrides = {}) {
       pendingDiffs: [],
       changeSets: [],
       todoItems: [],
+      toolTimeline: [],
       backgroundTasks: [],
       subagentTasks: [],
     },
@@ -628,6 +629,14 @@ test("harness state sync rebuilds pending approvals, diffs, and latest todo list
     { content: "step two", status: "in_progress" },
     { content: "step three", status: "completed" },
   ]);
+  const timelineById = new Map(
+    session.harnessState.toolTimeline.map((item) => [item.toolCallId, item]),
+  );
+  assert.equal(timelineById.get("edit-1").status, "pending_approval");
+  assert.equal(timelineById.get("edit-1").label, "Edit");
+  assert.equal(timelineById.get("edit-1").target, "app.ts");
+  assert.equal(timelineById.get("read-1").label, "Read");
+  assert.equal(timelineById.get("todo-new").status, "succeeded");
 });
 
 test("harness events and task upserts keep session state tidy", () => {
@@ -672,6 +681,8 @@ test("harness events and task upserts keep session state tidy", () => {
   });
 
   assert.equal(session.harnessState.pendingApprovals.length, 1);
+  assert.equal(session.harnessState.toolTimeline[0].status, "pending_approval");
+  assert.equal(session.harnessState.toolTimeline[0].label, "Edit");
   assert.equal(session.harnessState.pendingDiffs.length, 1);
   assert.equal(session.harnessState.pendingDiffs[0].changeSetId, "changes:edit-2");
   assert.equal(session.harnessState.pendingDiffs[0].status, "pending");
@@ -686,6 +697,23 @@ test("harness events and task upserts keep session state tidy", () => {
   assert.equal(session.harnessState.pendingApprovals.length, 0);
   assert.equal(session.harnessState.pendingDiffs.length, 1);
   assert.equal(session.harnessState.pendingDiffs[0].status, "applied");
+
+  applyHarnessEventToSession(session, {
+    type: "tool_call_started",
+    sessionId: session.id,
+    toolCallId: "edit-2",
+    detail: "edit_file",
+  });
+  assert.equal(session.harnessState.toolTimeline[0].status, "running");
+  applyHarnessEventToSession(session, {
+    type: "tool_call_completed",
+    sessionId: session.id,
+    toolCallId: "edit-2",
+    detail: "edit_file",
+  });
+  assert.equal(session.harnessState.toolTimeline[0].status, "succeeded");
+  assert.equal(typeof session.harnessState.toolTimeline[0].startedAt, "number");
+  assert.equal(typeof session.harnessState.toolTimeline[0].completedAt, "number");
 
   upsertBackgroundTask(session, {
     id: "bg-old",

@@ -1,6 +1,6 @@
 import type { ChatEntry, ChatSession, ToolCall } from "../types";
 import type { ToolLoopDeps } from "../tool-loop";
-import { upsertSubagentTask } from "./state";
+import { createEmptyHarnessSessionState, upsertSubagentTask } from "./state";
 import { HarnessRunner } from "./runner";
 
 const MAX_SUBAGENT_DEPTH = 1;
@@ -124,14 +124,7 @@ function createSubagentSession(
     checkpoints: [],
     lastTokenUsage: undefined,
     activeSkills: [...parent.activeSkills],
-    harnessState: {
-      pendingApprovals: [],
-      pendingDiffs: [],
-      changeSets: [],
-      todoItems: [],
-      backgroundTasks: [],
-      subagentTasks: [],
-    },
+    harnessState: createEmptyHarnessSessionState(),
     subagentDepth: (parent.subagentDepth ?? 0) + 1,
     subagentReadonly: mode !== "write",
     subagentAllowedPaths: allowedPaths,

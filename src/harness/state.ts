@@ -7,6 +7,8 @@ import type {
   HarnessPendingDiff,
   HarnessSubagentTask,
   HarnessTodoItem,
+  HarnessToolTimelineItem,
+  HarnessToolTimelineStatus,
   ToolCall,
 } from "../types";
 import { classifyShellCommandRisk } from "./policy";
@@ -16,6 +18,8 @@ const MAX_BACKGROUND_TASKS = 20;
 const MAX_SUBAGENT_TASKS = 10;
 const MAX_DIFF_ARTIFACTS = 20;
 const MAX_CHANGE_SETS = 20;
+const MAX_TOOL_TIMELINE_ITEMS = 40;
+const TOOL_TIMELINE_PREVIEW_LIMIT = 600;
 
 export function createEmptyHarnessSessionState() {
   return {
@@ -23,6 +27,7 @@ export function createEmptyHarnessSessionState() {
     pendingDiffs: [],
     changeSets: [],
     todoItems: [],
+    toolTimeline: [],
     backgroundTasks: [],
     subagentTasks: [],
   };
@@ -38,9 +43,21 @@ export function applyHarnessEventToSession(
       markPendingDiffsStale(session);
       markPendingChangeSetsStale(session);
       return;
+    case "tool_calls_detected":
+      syncToolTimelineFromTranscript(session);
+      return;
     case "tool_call_pending_approval":
       if (!event.toolCallId) return;
       const pendingToolCall = findToolCall(session, event.toolCallId);
+      upsertToolTimelineItem(
+        session,
+        buildToolTimelineItem(pendingToolCall, {
+          toolCallId: event.toolCallId,
+          toolType: event.detail || pendingToolCall?.type || "tool",
+          status: "pending_approval",
+          now: Date.now(),
+        }),
+      );
       upsertPendingApproval(session, {
         toolCallId: event.toolCallId,
         toolType: event.detail || "tool",
@@ -66,12 +83,52 @@ export function applyHarnessEventToSession(
         updatedAt: Date.now(),
       });
       return;
-    case "tool_call_started":
-    case "tool_call_completed":
-    case "tool_call_failed":
+    case "tool_call_started": {
       if (!event.toolCallId) return;
+      const toolCall = findToolCall(session, event.toolCallId);
+      upsertToolTimelineItem(
+        session,
+        buildToolTimelineItem(toolCall, {
+          toolCallId: event.toolCallId,
+          toolType: event.detail || toolCall?.type || "tool",
+          status: "running",
+          now: Date.now(),
+        }),
+      );
       clearPendingToolApproval(session, event.toolCallId);
       return;
+    }
+    case "tool_call_completed": {
+      if (!event.toolCallId) return;
+      const toolCall = findToolCall(session, event.toolCallId);
+      upsertToolTimelineItem(
+        session,
+        buildToolTimelineItem(toolCall, {
+          toolCallId: event.toolCallId,
+          toolType: event.detail || toolCall?.type || "tool",
+          status: "succeeded",
+          now: Date.now(),
+        }),
+      );
+      clearPendingToolApproval(session, event.toolCallId);
+      return;
+    }
+    case "tool_call_failed": {
+      if (!event.toolCallId) return;
+      const toolCall = findToolCall(session, event.toolCallId);
+      upsertToolTimelineItem(
+        session,
+        buildToolTimelineItem(toolCall, {
+          toolCallId: event.toolCallId,
+          toolType: toolCall?.type || "tool",
+          status: "failed",
+          resultPreview: event.detail,
+          now: Date.now(),
+        }),
+      );
+      clearPendingToolApproval(session, event.toolCallId);
+      return;
+    }
     case "turn_completed":
     case "turn_failed":
       session.harnessState.pendingApprovals = [];
@@ -118,6 +175,240 @@ export function syncHarnessPendingState(session: ChatSession) {
     changeSetId: findChangeSetIdForToolCall(session, diff.toolCallId),
   }));
   session.harnessState.todoItems = extractTodoItems(session);
+  syncToolTimelineFromTranscript(session);
+}
+
+function syncToolTimelineFromTranscript(session: ChatSession) {
+  for (const entry of session.transcript) {
+    if (!entry.toolCalls?.length) continue;
+    for (const toolCall of entry.toolCalls) {
+      upsertToolTimelineItem(
+        session,
+        buildToolTimelineItem(toolCall, {
+          status: resolveToolTimelineStatus(toolCall),
+          now: Date.now(),
+        }),
+      );
+    }
+  }
+}
+
+function buildToolTimelineItem(
+  toolCall: ToolCall | undefined,
+  options: {
+    toolCallId?: string;
+    toolType?: string;
+    status: HarnessToolTimelineStatus;
+    resultPreview?: string;
+    now: number;
+  },
+): HarnessToolTimelineItem {
+  const toolCallId =
+    options.toolCallId ||
+    toolCall?.id ||
+    `tool:${options.now.toString(36)}`;
+  const toolType = options.toolType || toolCall?.type || "tool";
+  const descriptor = describeTimelineTool(toolCall, toolType);
+  const resultPreview =
+    options.resultPreview ?? buildToolResultPreview(toolCall?.result ?? "");
+
+  return {
+    id: toolCallId,
+    toolCallId,
+    toolType,
+    label: descriptor.label,
+    target: descriptor.target,
+    status: options.status,
+    filePath: toolCall?.filePath || undefined,
+    command: toolCall?.command || undefined,
+    url: toolCall?.url || undefined,
+    query: toolCall?.query || toolCall?.pattern || undefined,
+    resultPreview: resultPreview || undefined,
+    commandRisk:
+      toolCall?.type === "run_command"
+        ? classifyShellCommandRisk(toolCall.command || "")
+        : undefined,
+    createdAt: options.now,
+    updatedAt: options.now,
+  };
+}
+
+function upsertToolTimelineItem(
+  session: ChatSession,
+  item: HarnessToolTimelineItem,
+) {
+  const currentTimeline = session.harnessState.toolTimeline ?? [];
+  const previous = currentTimeline.find(
+    (timelineItem) => timelineItem.toolCallId === item.toolCallId,
+  );
+  const startedAt =
+    item.status === "running"
+      ? previous?.startedAt ?? item.updatedAt
+      : previous?.startedAt;
+  const completedAt =
+    isTerminalTimelineStatus(item.status)
+      ? previous?.completedAt ?? item.updatedAt
+      : previous?.completedAt;
+
+  const merged: HarnessToolTimelineItem = {
+    ...previous,
+    ...item,
+    createdAt: previous?.createdAt ?? item.createdAt,
+    startedAt,
+    completedAt,
+  };
+
+  const withoutCurrent = currentTimeline.filter(
+    (timelineItem) => timelineItem.toolCallId !== item.toolCallId,
+  );
+  session.harnessState.toolTimeline = [merged, ...withoutCurrent]
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+    .slice(0, MAX_TOOL_TIMELINE_ITEMS);
+}
+
+function isTerminalTimelineStatus(status: HarnessToolTimelineStatus) {
+  return (
+    status === "succeeded" ||
+    status === "failed" ||
+    status === "rejected" ||
+    status === "stale"
+  );
+}
+
+function resolveToolTimelineStatus(
+  toolCall: ToolCall,
+): HarnessToolTimelineStatus {
+  if (toolCall.status === "pending") return "pending_approval";
+  if (toolCall.status === "approved") return "running";
+  if (toolCall.status === "rejected") return "rejected";
+  if (toolCall.status === "error") {
+    return /^Edit became stale/i.test(toolCall.result || "") ? "stale" : "failed";
+  }
+  if (toolCall.status === "executed") {
+    return looksLikeFailedToolResult(toolCall.result || "")
+      ? "failed"
+      : "succeeded";
+  }
+  return "detected";
+}
+
+function looksLikeFailedToolResult(result: string): boolean {
+  return /^(?:Tool execution error|Command failed|Error:|Blocked by permission rule)/i.test(
+    result.trim(),
+  );
+}
+
+function buildToolResultPreview(result: string): string {
+  const text = result.trim();
+  if (!text) return "";
+  const compacted = text
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .join("\n")
+    .trim();
+  if (compacted.length <= TOOL_TIMELINE_PREVIEW_LIMIT) return compacted;
+  return `${compacted.slice(0, TOOL_TIMELINE_PREVIEW_LIMIT - 1).trimEnd()}…`;
+}
+
+function describeTimelineTool(
+  toolCall: ToolCall | undefined,
+  toolType: string,
+): { label: string; target: string } {
+  const fileTarget = compactPath(toolCall?.filePath || "");
+  switch (toolType) {
+    case "read_file":
+      return { label: "Read", target: fileTarget || "file" };
+    case "edit_file":
+      return { label: "Edit", target: fileTarget || "file" };
+    case "write_file":
+      return { label: "Write", target: fileTarget || "file" };
+    case "open_file":
+      return { label: "Open", target: fileTarget || "file" };
+    case "open_definition":
+    case "go_to_definition":
+      return { label: "Open definition", target: fileTarget || "symbol" };
+    case "find_references":
+      return { label: "Find references", target: fileTarget || "symbol" };
+    case "document_symbols":
+      return { label: "Inspect symbols", target: fileTarget || "document" };
+    case "workspace_symbols":
+      return { label: "Search symbols", target: toolCall?.query || "workspace" };
+    case "hover_symbol":
+      return { label: "Inspect symbol", target: fileTarget || "symbol" };
+    case "code_actions":
+      return { label: "Check fixes", target: fileTarget || "current file" };
+    case "apply_code_action":
+      return {
+        label: "Apply fix",
+        target: toolCall?.actionTitle || fileTarget || "code action",
+      };
+    case "diagnostics":
+      return { label: "Check diagnostics", target: fileTarget || "workspace" };
+    case "web_search":
+      return { label: "Search web", target: toolCall?.query || "query" };
+    case "web_fetch":
+      return { label: "Fetch", target: compactUrl(toolCall?.url || "") || "page" };
+    case "run_command":
+      return { label: "Run", target: toolCall?.command || "command" };
+    case "grep":
+      return { label: "Search code", target: toolCall?.pattern || "pattern" };
+    case "glob":
+      return { label: "Find files", target: toolCall?.glob || "files" };
+    case "list_files":
+      return { label: "List files", target: fileTarget || "workspace" };
+    case "git_status":
+      return { label: "Git status", target: "repository" };
+    case "git_diff":
+      return { label: "Git diff", target: "repository" };
+    case "git_commit":
+      return { label: "Commit", target: toolCall?.commitMessage || "changes" };
+    case "todo_write":
+      return { label: "Update plan", target: "task list" };
+    case "task":
+      return { label: "Delegate", target: toolCall?.taskPrompt || "subagent task" };
+    case "list_tools":
+      return { label: "List tools", target: toolCall?.query || "registry" };
+    case "list_skills":
+      return { label: "List skills", target: toolCall?.query || "registry" };
+    case "run_skill":
+      return { label: "Run skill", target: toolCall?.skillName || "skill" };
+    case "memory_read":
+      return { label: "Read memory", target: toolCall?.memoryQuery || toolCall?.memoryType || "memory" };
+    case "memory_write":
+      return { label: "Write memory", target: toolCall?.memoryName || toolCall?.memoryType || "memory" };
+    case "memory_delete":
+      return { label: "Delete memory", target: toolCall?.memoryName || "memory" };
+    default:
+      return {
+        label: toolType.replace(/_/g, " "),
+        target:
+          fileTarget ||
+          toolCall?.query ||
+          toolCall?.command ||
+          toolCall?.url ||
+          "",
+      };
+  }
+}
+
+function compactPath(value: string): string {
+  const normalized = value.trim().replace(/\\/g, "/");
+  if (!normalized) return "";
+  const parts = normalized.split("/").filter(Boolean);
+  return parts[parts.length - 1] || normalized;
+}
+
+function compactUrl(value: string): string {
+  const text = value.trim();
+  if (!text) return "";
+  try {
+    const url = new URL(text);
+    return url.pathname && url.pathname !== "/"
+      ? `${url.host}${url.pathname}`
+      : url.host;
+  } catch {
+    return text;
+  }
 }
 
 function buildPendingApprovalCommandRisk(

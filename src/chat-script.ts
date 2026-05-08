@@ -522,6 +522,7 @@ export function getChatScript(brandIconUri: string): string {
         pendingDiffs: [],
         changeSets: [],
         todoItems: [],
+        toolTimeline: [],
         backgroundTasks: [],
         subagentTasks: [],
       };
@@ -1610,6 +1611,57 @@ export function getChatScript(brandIconUri: string): string {
       });
     }
 
+    function getTimelineBadgeClass(status) {
+      switch (status) {
+        case "succeeded":
+          return "completed";
+        case "pending_approval":
+        case "detected":
+          return "pending";
+        case "running":
+          return "running";
+        case "failed":
+          return "failed";
+        case "rejected":
+          return "rejected";
+        case "stale":
+          return "stale";
+        default:
+          return "pending";
+      }
+    }
+
+    function formatTimelineStatus(status) {
+      switch (status) {
+        case "pending_approval":
+          return "approval";
+        case "succeeded":
+          return "done";
+        case "failed":
+          return "failed";
+        case "rejected":
+          return "rejected";
+        case "stale":
+          return "stale";
+        case "running":
+          return "running";
+        case "detected":
+        default:
+          return "queued";
+      }
+    }
+
+    function formatRelativeTime(timestamp, now) {
+      const delta = Math.max(0, (now || Date.now()) - timestamp);
+      if (delta < 1000) return "now";
+      const seconds = Math.floor(delta / 1000);
+      if (seconds < 60) return seconds + "s ago";
+      const minutes = Math.floor(seconds / 60);
+      if (minutes < 60) return minutes + "m ago";
+      const hours = Math.floor(minutes / 60);
+      return hours + "h ago";
+    }
+
     function renderHarnessPane(payload) {
       if (!harnessPane) return;
 
@@ -1620,7 +1672,12 @@ export function getChatScript(brandIconUri: string): string {
       const pendingApprovalIds = new Set(
         pendingApprovals.map((approval) => approval && approval.toolCallId).filter(Boolean),
       );
+      const pendingDiffSet = getPendingDiffSet(payload);
       const now = Date.now();
+      const toolTimeline = (Array.isArray(harnessState.toolTimeline)
+        ? harnessState.toolTimeline
+        : []
+      ).slice(0, 6);
       const changeSets = (Array.isArray(harnessState.changeSets)
         ? harnessState.changeSets
         : []
@@ -1664,6 +1721,7 @@ export function getChatScript(brandIconUri: string): string {
         runtimeHealth.level === "ok" &&
         !changeSets.length &&
         !todoItems.length &&
+        !toolTimeline.length &&
         !subagentTasks.length &&
         !payload.worktreeRoot &&
         !payload.permissionSummary &&
@@ -1839,6 +1897,135 @@ export function getChatScript(brandIconUri: string): string {
           card.appendChild(actions);
         }
 
+        harnessPane.appendChild(card);
+      }
+
+      if (toolTimeline.length) {
+        const card = document.createElement("div");
+        card.className = "harness-card harness-activity-card";
+
+        const header = document.createElement("div");
+        header.className = "harness-card-header";
+
+        const title = document.createElement("div");
+        title.className = "harness-card-title";
+
+        const label = document.createElement("span");
+        label.className = "harness-card-label";
+        label.textContent = "Activity";
+        title.appendChild(label);
+
+        const runningCount = toolTimeline.filter((item) =>
+          item.status === "running" || item.status === "pending_approval" || item.status === "detected",
+        ).length;
+        const failedCount = toolTimeline.filter((item) =>
+          item.status === "failed" || item.status === "stale",
+        ).length;
+        const copy = document.createElement("span");
+        copy.className = "harness-card-copy";
+        copy.textContent = runningCount
+          ? runningCount + " tool step" + (runningCount === 1 ? "" : "s") + " in flight."
+          : "Latest tool and result steps.";
+        title.appendChild(copy);
+        header.appendChild(title);
+
+        const badge = document.createElement("span");
+        badge.className = "harness-badge " + (failedCount ? "failed" : runningCount ? "running" : "completed");
+        badge.textContent = failedCount ? "attention" : runningCount ? runningCount + " active" : "recent";
+        header.appendChild(badge);
+        card.appendChild(header);
+
+        const list = document.createElement("div");
+        list.className = "harness-task-list harness-timeline-list";
+
+        for (const item of toolTimeline) {
+          const row = document.createElement("div");
+          row.className = "harness-task-row harness-timeline-row " + (item.status || "detected");
+
+          const top = document.createElement("div");
+          top.className = "harness-task-top";
+
+          const name = document.createElement("div");
+          name.className = "harness-task-command harness-timeline-command";
+          name.textContent = (item.label || item.toolType || "Tool") +
+            (item.target ? " · " + item.target : "");
+          name.title = [
+            item.toolType,
+            item.filePath,
+            item.command,
+            item.url,
+            item.query,
+          ].filter(Boolean).join("\\n");
+          top.appendChild(name);
+
+          const itemBadge = document.createElement("span");
+          itemBadge.className = "harness-badge " + getTimelineBadgeClass(item.status);
+          itemBadge.textContent = formatTimelineStatus(item.status);
+          top.appendChild(itemBadge);
+          row.appendChild(top);
+
+          const metaBits = [];
+          if (item.commandRisk) metaBits.push("risk: " + formatCommandRiskLabel(item.commandRisk));
+          if (item.toolType) metaBits.push(item.toolType);
+          if (typeof item.updatedAt === "number" && item.updatedAt > 0) {
+            metaBits.push(formatRelativeTime(item.updatedAt, now));
+          }
+          if (metaBits.length) {
+            const meta = document.createElement("div");
+            meta.className = "harness-card-meta";
+            meta.textContent = metaBits.join(" · ");
+            row.appendChild(meta);
+          }
+
+          const actions = document.createElement("div");
+          actions.className = "harness-task-actions";
+          if (item.filePath) {
+            const openBtn = document.createElement("button");
+            openBtn.className = "tool-btn";
+            openBtn.textContent = "Open File";
+            openBtn.onclick = () => vscode.postMessage({ type: "openFile", filePath: item.filePath });
+            actions.appendChild(openBtn);
+          }
+          if (pendingDiffSet.has(item.toolCallId)) {
+            const diffBtn = document.createElement("button");
+            diffBtn.className = "tool-btn";
+            diffBtn.textContent = "Diff";
+            diffBtn.disabled = !!payload.busy;
+            diffBtn.onclick = () => vscode.postMessage({ type: "openDiff", toolCallId: item.toolCallId });
+            actions.appendChild(diffBtn);
+          }
+          if (pendingApprovalIds.has(item.toolCallId)) {
+            const approveBtn = document.createElement("button");
+            approveBtn.className = "tool-btn tool-btn-approve";
+            approveBtn.textContent = "Approve";
+            approveBtn.disabled = !!payload.busy;
+            approveBtn.onclick = () => vscode.postMessage({ type: "approveToolCall", toolCallId: item.toolCallId });
+            actions.appendChild(approveBtn);
+
+            const rejectBtn = document.createElement("button");
+            rejectBtn.className = "tool-btn tool-btn-reject";
+            rejectBtn.textContent = "Reject";
+            rejectBtn.disabled = !!payload.busy;
+            rejectBtn.onclick = () => vscode.postMessage({ type: "rejectToolCall", toolCallId: item.toolCallId });
+            actions.appendChild(rejectBtn);
+          }
+          if (actions.childElementCount) {
+            row.appendChild(actions);
+          }
+
+          if (item.resultPreview) {
+            const preview = document.createElement("div");
+            preview.className = "harness-task-preview harness-timeline-preview";
+            preview.textContent = item.resultPreview.length > 220
+              ? item.resultPreview.slice(0, 219).trimEnd() + "…"
+              : item.resultPreview;
+            row.appendChild(preview);
+          }
+
+          list.appendChild(row);
+        }
+
+        card.appendChild(list);
         harnessPane.appendChild(card);
       }
 
