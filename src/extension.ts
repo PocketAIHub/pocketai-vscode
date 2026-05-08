@@ -63,6 +63,7 @@ import {
 } from "./opencode-go";
 import { getXAIProviderName, XAI_BASE_URL } from "./xai";
 import { fetchPocketAiRemoteEndpoints } from "./pocketai-remote-devices";
+import { getInteractionModeStatus } from "./chat-workflows";
 import { normalizeSessionEndpointSelections } from "./endpoint-workflows";
 import { getSessionWorkspaceRoot } from "./workspace-roots";
 import {
@@ -175,6 +176,20 @@ export function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
       vscode.commands.registerCommand("pocketai.test.getSidebarSession", () =>
         providerInstance?.getTestSidebarSession(),
+      ),
+    );
+    context.subscriptions.push(
+      vscode.commands.registerCommand(
+        "pocketai.test.setMode",
+        async (mode: import("./types").InteractionMode) =>
+          providerInstance?.setTestMode(mode),
+      ),
+    );
+    context.subscriptions.push(
+      vscode.commands.registerCommand(
+        "pocketai.test.approveToolCall",
+        async (toolCallId: string) =>
+          providerInstance?.approveTestToolCall(toolCallId, true),
       ),
     );
   }
@@ -796,6 +811,26 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
     return this.getTestSidebarSession();
   }
 
+  async approveTestToolCall(toolCallId: string, approved: boolean) {
+    const sessionId = this.findSessionWithToolCall(toolCallId);
+    if (sessionId) {
+      await this.handleToolApproval(sessionId, toolCallId, approved);
+    }
+    return this.getTestSidebarSession();
+  }
+
+  async setTestMode(mode: import("./types").InteractionMode) {
+    const session = this.sessionMgr.requireSession(this.sessionMgr.sidebarSessionId);
+    if (session && (mode === "ask" || mode === "auto" || mode === "plan")) {
+      session.mode = mode;
+      session.status = getInteractionModeStatus(session.mode);
+      this.sessionMgr.touchSession(session);
+      await this.sessionMgr.saveState();
+      this.postState();
+    }
+    return this.getTestSidebarSession();
+  }
+
   getTestSidebarSession() {
     const session = this.sessionMgr.requireSession(this.sessionMgr.sidebarSessionId);
     if (!session) return undefined;
@@ -804,6 +839,7 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
       status: session.status,
       selectedEndpoint: session.selectedEndpoint,
       selectedModel: session.selectedModel,
+      mode: session.mode,
       transcript: session.transcript.map((entry) => ({
         role: entry.role,
         content: entry.content,

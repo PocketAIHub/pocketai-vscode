@@ -20,6 +20,8 @@ const EXPECTED_COMMANDS = [
 const EXPECTED_TEST_COMMANDS = [
   "pocketai.test.sendPrompt",
   "pocketai.test.getSidebarSession",
+  "pocketai.test.setMode",
+  "pocketai.test.approveToolCall",
 ];
 
 async function resetPocketAiConfig() {
@@ -107,6 +109,7 @@ async function run() {
     await assertPanelSelectionRoundTrip(fakeEndpoint);
     await assertSlashCommandRoundTrip(fakeEndpoint);
     await assertStructuredToolActionRoundTrip();
+    await assertEditApprovalVisualStateRoundTrip();
   } finally {
     await resetPocketAiConfig();
     await fakeEndpoint.close();
@@ -234,6 +237,113 @@ async function assertStructuredToolActionRoundTrip() {
   );
 }
 
+async function assertEditApprovalVisualStateRoundTrip() {
+  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+  assert(workspaceFolder, "Expected an extension-test workspace folder.");
+  const editableUri = vscode.Uri.joinPath(
+    workspaceFolder.uri,
+    "editable-target.js",
+  );
+  await vscode.workspace.fs.writeFile(
+    editableUri,
+    Buffer.from("export const value = 1;\n", "utf8"),
+  );
+  const modeSnapshot = await vscode.commands.executeCommand(
+    "pocketai.test.setMode",
+    "ask",
+  );
+  assert.equal(modeSnapshot.mode, "ask");
+
+  const pendingSnapshot = await sendTestPrompt(
+    "Exercise edit approval visual coverage by updating editable-target.js.",
+  );
+  const assistantActionEntry = pendingSnapshot.transcript.find(
+    (entry) =>
+      entry.assistantAction?.kind === "tool_action" &&
+      entry.assistantAction.label === "Preparing changes",
+  );
+  assert(assistantActionEntry, "Expected an edit assistant action entry.");
+  assert.equal(assistantActionEntry.assistantAction.toolCount, 2);
+  assert.match(assistantActionEntry.content, /^\[PocketAI action: Preparing changes/);
+
+  const editTool = assistantActionEntry.toolCalls.find(
+    (toolCall) => toolCall.type === "edit_file",
+  );
+  assert(editTool, "Expected a pending edit_file call.");
+  assert.equal(editTool.filePath, "editable-target.js");
+  assert.equal(editTool.status, "pending");
+
+  assert.deepEqual(pendingSnapshot.harnessState.pendingApprovals, [
+    {
+      toolCallId: editTool.id,
+      toolType: "edit_file",
+      filePath: "editable-target.js",
+    },
+  ]);
+  assert(
+    pendingSnapshot.harnessState.pendingDiffs.some(
+      (diff) =>
+        diff.toolCallId === editTool.id &&
+        diff.filePath === "editable-target.js" &&
+        diff.status === "pending" &&
+        diff.previewKind === "inline-diff",
+    ),
+    "Expected a pending inline diff for the edit.",
+  );
+  assert(
+    pendingSnapshot.harnessState.changeSets.some(
+      (changeSet) =>
+        changeSet.status === "pending" &&
+        changeSet.toolCallIds.includes(editTool.id) &&
+        changeSet.filePaths.includes("editable-target.js"),
+    ),
+    "Expected a pending change set for the edit.",
+  );
+  assert(
+    pendingSnapshot.harnessState.toolTimeline.some(
+      (item) =>
+        item.toolCallId === editTool.id &&
+        item.toolType === "edit_file" &&
+        item.status === "pending_approval" &&
+        item.target === "editable-target.js",
+    ),
+    "Expected the Activity timeline to show the edit awaiting approval.",
+  );
+
+  await vscode.commands.executeCommand("pocketai.test.approveToolCall", editTool.id);
+  const approvedSnapshot = await waitForSessionSnapshot(
+    (snapshot) =>
+      /Edit approval coverage complete/.test(lastTranscriptContent(snapshot)),
+    "approved edit flow to finish with a final response",
+  );
+
+  const finalFile = Buffer.from(
+    await vscode.workspace.fs.readFile(editableUri),
+  ).toString("utf8");
+  assert.equal(finalFile, "export const value = 2;\n");
+  assert.equal(approvedSnapshot.harnessState.pendingApprovals.length, 0);
+  assert(
+    approvedSnapshot.harnessState.pendingDiffs.some(
+      (diff) => diff.toolCallId === editTool.id && diff.status === "applied",
+    ),
+    "Expected the pending diff to be marked applied after approval.",
+  );
+  assert(
+    approvedSnapshot.harnessState.changeSets.some(
+      (changeSet) =>
+        changeSet.toolCallIds.includes(editTool.id) &&
+        changeSet.status === "applied",
+    ),
+    "Expected the change set to be marked applied after approval.",
+  );
+  assert(
+    approvedSnapshot.harnessState.toolTimeline.some(
+      (item) => item.toolCallId === editTool.id && item.status === "succeeded",
+    ),
+    "Expected the Activity timeline to show the approved edit as succeeded.",
+  );
+}
+
 async function sendTestPrompt(prompt) {
   const snapshot = await vscode.commands.executeCommand(
     "pocketai.test.sendPrompt",
@@ -241,6 +351,17 @@ async function sendTestPrompt(prompt) {
   );
   assert(snapshot, "Expected test prompt command to return a session snapshot.");
   return snapshot;
+}
+
+async function waitForSessionSnapshot(predicate, description, timeoutMs = 5000) {
+  let latest;
+  await waitFor(async () => {
+    latest = await vscode.commands.executeCommand(
+      "pocketai.test.getSidebarSession",
+    );
+    return latest && predicate(latest);
+  }, description, timeoutMs);
+  return latest;
 }
 
 function lastTranscriptContent(snapshot) {
@@ -325,6 +446,17 @@ function sendSseChatResponse(response, body) {
     connection: "keep-alive",
   });
   const serializedMessages = JSON.stringify(body.messages);
+  if (
+    /Exercise edit approval visual coverage/.test(serializedMessages) &&
+    /Successfully edited `editable-target\.js`/.test(serializedMessages)
+  ) {
+    sendTextChatResponse(response, "Edit approval coverage complete.");
+    return;
+  }
+  if (/Exercise edit approval visual coverage/.test(serializedMessages)) {
+    sendStructuredEditFileToolCalls(response);
+    return;
+  }
   if (
     /Exercise structured action summaries/.test(serializedMessages) &&
     !/PocketAI Extension Test Workspace/.test(serializedMessages)
@@ -417,6 +549,85 @@ function sendStructuredReadFileToolCall(response) {
       model: "pocketai-test-model",
       choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
       usage: { prompt_tokens: 13, completion_tokens: 4 },
+    })}\n\n`,
+  );
+  response.write("data: [DONE]\n\n");
+  response.end();
+}
+
+function sendStructuredEditFileToolCalls(response) {
+  response.write(
+    `data: ${JSON.stringify({
+      model: "pocketai-test-model",
+      choices: [
+        {
+          index: 0,
+          delta: {
+            tool_calls: [
+              {
+                index: 0,
+                id: "call_read_editable",
+                type: "function",
+                function: {
+                  name: "read_file",
+                  arguments: "",
+                },
+              },
+              {
+                index: 1,
+                id: "call_edit_editable",
+                type: "function",
+                function: {
+                  name: "edit_file",
+                  arguments: "",
+                },
+              },
+            ],
+          },
+          finish_reason: null,
+        },
+      ],
+    })}\n\n`,
+  );
+  response.write(
+    `data: ${JSON.stringify({
+      model: "pocketai-test-model",
+      choices: [
+        {
+          index: 0,
+          delta: {
+            tool_calls: [
+              {
+                index: 0,
+                function: {
+                  arguments: JSON.stringify({
+                    path: "editable-target.js",
+                    limit: 20,
+                  }),
+                },
+              },
+              {
+                index: 1,
+                function: {
+                  arguments: JSON.stringify({
+                    path: "editable-target.js",
+                    old_string: "export const value = 1;",
+                    new_string: "export const value = 2;",
+                  }),
+                },
+              },
+            ],
+          },
+          finish_reason: null,
+        },
+      ],
+    })}\n\n`,
+  );
+  response.write(
+    `data: ${JSON.stringify({
+      model: "pocketai-test-model",
+      choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
+      usage: { prompt_tokens: 17, completion_tokens: 5 },
     })}\n\n`,
   );
   response.write("data: [DONE]\n\n");
