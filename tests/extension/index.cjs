@@ -106,6 +106,7 @@ async function run() {
 
     await assertPanelSelectionRoundTrip(fakeEndpoint);
     await assertSlashCommandRoundTrip(fakeEndpoint);
+    await assertStructuredToolActionRoundTrip();
   } finally {
     await resetPocketAiConfig();
     await fakeEndpoint.close();
@@ -195,6 +196,44 @@ async function assertSlashCommandRoundTrip(fakeEndpoint) {
   assert.deepEqual(refreshSnapshot.models, ["pocketai-test-model"]);
 }
 
+async function assertStructuredToolActionRoundTrip() {
+  const snapshot = await sendTestPrompt(
+    "Exercise structured action summaries by reading the workspace README.",
+  );
+  const assistantActionEntry = snapshot.transcript.find(
+    (entry) => entry.assistantAction?.kind === "tool_action",
+  );
+  assert(assistantActionEntry, "Expected a structured assistant action entry.");
+  assert.match(assistantActionEntry.content, /^\[PocketAI action: Reading/);
+  assert.equal(assistantActionEntry.assistantAction.label, "Reading");
+  assert.equal(assistantActionEntry.assistantAction.toolCount, 1);
+  assert.equal(assistantActionEntry.assistantAction.actions[0].toolType, "read_file");
+  assert.equal(assistantActionEntry.assistantAction.actions[0].target, "README.md");
+  assert.equal(assistantActionEntry.toolCalls[0].type, "read_file");
+  assert.equal(assistantActionEntry.toolCalls[0].status, "executed");
+
+  const readResult = snapshot.transcript.find(
+    (entry) =>
+      entry.role === "tool" &&
+      /PocketAI Extension Test Workspace/.test(entry.content),
+  );
+  assert(readResult, "Expected read_file tool output in the transcript.");
+
+  assert.match(
+    lastTranscriptContent(snapshot),
+    /Structured action summary complete/,
+  );
+  assert(
+    snapshot.harnessState.toolTimeline.some(
+      (item) =>
+        item.toolType === "read_file" &&
+        item.status === "succeeded" &&
+        item.target === "README.md",
+    ),
+    "Expected the harness Activity timeline to include the executed read_file call.",
+  );
+}
+
 async function sendTestPrompt(prompt) {
   const snapshot = await vscode.commands.executeCommand(
     "pocketai.test.sendPrompt",
@@ -245,9 +284,9 @@ async function createFakeEndpoint() {
       const bodyText = await readRequestBody(request);
       chatRequests.push({
         headers: request.headers,
-        body: JSON.parse(bodyText),
-      });
-      sendSseChatResponse(response);
+      body: JSON.parse(bodyText),
+    });
+      sendSseChatResponse(response, chatRequests.at(-1).body);
       return;
     }
 
@@ -279,19 +318,38 @@ function sendJson(response, body) {
   response.end(JSON.stringify(body));
 }
 
-function sendSseChatResponse(response) {
+function sendSseChatResponse(response, body) {
   response.writeHead(200, {
     "content-type": "text/event-stream",
     "cache-control": "no-cache",
     connection: "keep-alive",
   });
+  const serializedMessages = JSON.stringify(body.messages);
+  if (
+    /Exercise structured action summaries/.test(serializedMessages) &&
+    !/PocketAI Extension Test Workspace/.test(serializedMessages)
+  ) {
+    sendStructuredReadFileToolCall(response);
+    return;
+  }
+  if (
+    /Exercise structured action summaries/.test(serializedMessages) &&
+    /PocketAI Extension Test Workspace/.test(serializedMessages)
+  ) {
+    sendTextChatResponse(response, "Structured action summary complete.");
+    return;
+  }
+  sendTextChatResponse(response, "Fake endpoint saw the selected code.");
+}
+
+function sendTextChatResponse(response, text) {
   response.write(
     `data: ${JSON.stringify({
       model: "pocketai-test-model",
       choices: [
         {
           index: 0,
-          delta: { content: "Fake endpoint saw the selected code." },
+          delta: { content: text },
           finish_reason: null,
         },
       ],
@@ -302,6 +360,63 @@ function sendSseChatResponse(response) {
       model: "pocketai-test-model",
       choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
       usage: { prompt_tokens: 11, completion_tokens: 7 },
+    })}\n\n`,
+  );
+  response.write("data: [DONE]\n\n");
+  response.end();
+}
+
+function sendStructuredReadFileToolCall(response) {
+  response.write(
+    `data: ${JSON.stringify({
+      model: "pocketai-test-model",
+      choices: [
+        {
+          index: 0,
+          delta: {
+            tool_calls: [
+              {
+                index: 0,
+                id: "call_read_readme",
+                type: "function",
+                function: {
+                  name: "read_file",
+                  arguments: "",
+                },
+              },
+            ],
+          },
+          finish_reason: null,
+        },
+      ],
+    })}\n\n`,
+  );
+  response.write(
+    `data: ${JSON.stringify({
+      model: "pocketai-test-model",
+      choices: [
+        {
+          index: 0,
+          delta: {
+            tool_calls: [
+              {
+                index: 0,
+                function: {
+                  arguments: JSON.stringify({ path: "README.md", limit: 20 }),
+                },
+              },
+            ],
+          },
+          finish_reason: null,
+        },
+      ],
+    })}\n\n`,
+  );
+  response.write(
+    `data: ${JSON.stringify({
+      model: "pocketai-test-model",
+      choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
+      usage: { prompt_tokens: 13, completion_tokens: 4 },
     })}\n\n`,
   );
   response.write("data: [DONE]\n\n");

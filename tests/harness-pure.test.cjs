@@ -127,6 +127,11 @@ const {
   shouldContinueAfterToolResolution,
 } = require("../dist/tool-approval-workflows.js");
 const {
+  buildAssistantToolActionSummary,
+  formatAssistantToolActionContent,
+  isAssistantToolActionPlaceholder,
+} = require("../dist/tool-activity-summary.js");
+const {
   buildCancelledLoopOutcome,
   buildFailedLoopOutcome,
   getPostLoopReadyStatus,
@@ -807,6 +812,39 @@ Assistant: and then everything worked
 `);
 
   assert.equal(stripped, "Real answer");
+});
+
+test("assistant tool action summaries replace tool-only placeholders", () => {
+  const summary = buildAssistantToolActionSummary([
+    {
+      id: "read-1",
+      type: "read_file",
+      filePath: "src/harness/provider.ts",
+      status: "pending",
+    },
+    {
+      id: "grep-1",
+      type: "grep",
+      filePath: "",
+      pattern: "tool_summary_placeholder",
+      glob: "src/**/*.ts",
+      status: "pending",
+    },
+  ]);
+
+  assert.equal(summary.kind, "tool_action");
+  assert.equal(summary.label, "Searching context");
+  assert.equal(summary.toolCount, 2);
+  assert.equal(summary.actions[0].label, "Reading");
+  assert.equal(summary.actions[0].target, "provider.ts");
+  assert.equal(summary.actions[1].label, "Searching code");
+  assert.match(summary.detail, /Reading provider\.ts/);
+  assert.match(summary.detail, /Searching code tool_summary_placeholder/);
+
+  const content = formatAssistantToolActionContent(summary);
+  assert.match(content, /^\[PocketAI action: Searching context/);
+  assert.equal(isAssistantToolActionPlaceholder(content), true);
+  assert.equal(isAssistantToolActionPlaceholder("[Calling tools: read_file(src/a.ts)]"), true);
 });
 
 test("policy helpers classify risk and approvals conservatively", () => {

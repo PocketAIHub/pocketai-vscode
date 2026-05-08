@@ -761,6 +761,9 @@ export function getChatScript(brandIconUri: string): string {
       if (types.has("run_command") || types.has("git_status") || types.has("git_diff")) {
         return "Verifying the environment before answering.";
       }
+      if (types.has("task")) {
+        return "Delegating a focused pass before continuing.";
+      }
       return "Planning the next step and gathering evidence with tools.";
     }
 
@@ -825,6 +828,8 @@ export function getChatScript(brandIconUri: string): string {
           return { verb: "Use", target: tc.skillName || "skill", secondary: "", codeTarget: false };
         case "todo_write":
           return { verb: "Update", target: "task list", secondary: "", codeTarget: false };
+        case "task":
+          return { verb: "Start subagent", target: tc.subagentName || "subagent", secondary: tc.taskPrompt || "", codeTarget: false };
         case "memory_read":
           return { verb: "Read", target: tc.memoryName || tc.memoryType || "memory", secondary: "", codeTarget: false };
         case "memory_write":
@@ -1036,12 +1041,48 @@ export function getChatScript(brandIconUri: string): string {
       return "PocketAI wants to execute a shell command in your workspace.";
     }
 
-    function isToolPlaceholderAssistantMessage(entry) {
-      if (!entry || entry.role !== "assistant" || !entry.toolCalls || !entry.toolCalls.length) {
+    function isAssistantToolActionMessage(entry) {
+      if (!entry || entry.role !== "assistant") {
+        return false;
+      }
+      if (entry.assistantAction && entry.assistantAction.kind === "tool_action") {
+        return true;
+      }
+      if (!entry.toolCalls || !entry.toolCalls.length) {
         return false;
       }
       const text = String(entry.content || "").trim();
-      return /^\\[Calling tools?:[\\s\\S]*\\]$/i.test(text);
+      return /^\\[(?:PocketAI action:|Calling tools?:)[\\s\\S]*\\]$/i.test(text);
+    }
+
+    function getAssistantToolActionSummary(entry) {
+      if (!isAssistantToolActionMessage(entry)) {
+        return null;
+      }
+      const assistantAction = entry.assistantAction || null;
+      if (assistantAction && assistantAction.kind === "tool_action") {
+        return assistantAction;
+      }
+      const toolCalls = Array.isArray(entry.toolCalls) ? entry.toolCalls : [];
+      const detail = describeAssistantToolPlan(toolCalls) || "Preparing the next step.";
+      return {
+        kind: "tool_action",
+        label: "Using tools",
+        detail,
+        meta: toolCalls.length > 1
+          ? toolCalls.length + " tool calls queued."
+          : "Preparing the next step.",
+        toolCount: toolCalls.length,
+        actions: [],
+      };
+    }
+
+    function getAssistantToolActionMeta(summary, entry) {
+      const meta = String(summary?.meta || "").trim();
+      if (meta) return meta;
+      const count = Number(summary?.toolCount || entry?.toolCalls?.length || 0);
+      if (count > 1) return count + " tool calls queued.";
+      return "Preparing the next step.";
     }
 
     function createCollapsibleToolDetails(summary, detailTitle, details, options) {
@@ -1447,11 +1488,12 @@ export function getChatScript(brandIconUri: string): string {
 
     function appendMessage(entry, msgIndex, pendingApprovalMap, pendingDiffSet) {
       const div = document.createElement("div");
+      const assistantActionSummary = getAssistantToolActionSummary(entry);
       const roleClass = entry.role === "user"
         ? "msg-user"
         : entry.role === "tool"
           ? "msg-tool msg-tool-compact"
-          : isToolPlaceholderAssistantMessage(entry)
+          : assistantActionSummary
             ? "msg-assistant msg-activity-group"
             : "msg-assistant";
       div.className = "msg " + roleClass;
@@ -1466,21 +1508,20 @@ export function getChatScript(brandIconUri: string): string {
       const body = document.createElement("div");
       body.className = "msg-body";
 
-      if (entry.role === "assistant" && isToolPlaceholderAssistantMessage(entry)) {
-        const thoughtSummary = describeAssistantToolPlan(entry.toolCalls);
-        if (thoughtSummary) {
+      if (entry.role === "assistant" && assistantActionSummary) {
+        if (assistantActionSummary.detail || assistantActionSummary.label) {
           body.appendChild(
             renderActivityRow({
-              verb: "Thought",
-              target: thoughtSummary,
-              meta: "Preparing the next step.",
+              verb: assistantActionSummary.label || "Using tools",
+              target: assistantActionSummary.detail || describeAssistantToolPlan(entry.toolCalls),
+              meta: getAssistantToolActionMeta(assistantActionSummary, entry),
               details: "",
               detailTitle: "",
               collapsedByDefault: true,
               status: "executed",
               badgeText: "",
               codeTarget: false,
-              variant: "thought",
+              variant: "action",
             }),
           );
         }
@@ -2718,6 +2759,8 @@ export function getChatScript(brandIconUri: string): string {
           return { label: "Committing...", detail: target || "Creating a commit." };
         case "todo_write":
           return { label: "Updating tasks...", detail: target || "Refreshing the task list." };
+        case "task":
+          return { label: "Starting subagent...", detail: target || extra || "Delegating a focused task." };
         case "memory_read":
           return { label: "Reading memory...", detail: target || "Checking saved project memory." };
         case "memory_write":

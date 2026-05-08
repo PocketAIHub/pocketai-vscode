@@ -523,6 +523,22 @@ export function getChatStyles(): string {
       color: var(--fg);
     }
 
+    .tool-call-card.activity-variant-action .tool-call-dot {
+      background: rgba(56,189,248,0.82);
+      box-shadow: 0 0 0 4px rgba(56,189,248,0.08);
+    }
+
+    .tool-call-card.activity-variant-action .tool-call-verb {
+      color: var(--fg);
+      font-weight: 700;
+    }
+
+    .tool-call-card.activity-variant-action .tool-call-path {
+      font-family: var(--font-sans);
+      font-size: 13px;
+      color: var(--fg);
+    }
+
     .tool-call-header {
       display: flex;
       align-items: center;

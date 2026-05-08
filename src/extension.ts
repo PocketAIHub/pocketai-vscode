@@ -807,7 +807,16 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
       transcript: session.transcript.map((entry) => ({
         role: entry.role,
         content: entry.content,
+        assistantAction: entry.assistantAction,
+        toolCalls: entry.toolCalls?.map((toolCall) => ({
+          id: toolCall.id,
+          type: toolCall.type,
+          filePath: toolCall.filePath,
+          status: toolCall.status,
+          result: toolCall.result,
+        })),
       })),
+      harnessState: session.harnessState,
       endpoints: Array.from(this.endpointMgr.endpointHealthMap.values()),
       models: this.endpointMgr.getEndpointModels(session.selectedEndpoint),
     };

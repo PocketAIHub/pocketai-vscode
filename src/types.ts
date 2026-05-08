@@ -167,6 +167,24 @@ export type HarnessToolTimelineItem = {
   updatedAt: number;
 };
 
+export type AssistantToolActionSummaryItem = {
+  toolCallId: string;
+  toolType: string;
+  kind: string;
+  label: string;
+  target: string;
+  detail?: string;
+};
+
+export type AssistantToolActionSummary = {
+  kind: "tool_action";
+  label: string;
+  detail: string;
+  meta?: string;
+  toolCount: number;
+  actions: AssistantToolActionSummaryItem[];
+};
+
 export type HarnessBackgroundTaskStatus =
   | "running"
   | "completed"
@@ -273,6 +291,7 @@ export type ChatEntry = {
   role: ChatRole;
   content: string;
   toolCalls?: ToolCall[];
+  assistantAction?: AssistantToolActionSummary;
   images?: ImageAttachment[];
   files?: FileAttachment[];
 };

@@ -8,6 +8,10 @@ import {
   parseToolCalls,
   stripFabricatedResults,
 } from "../helpers";
+import {
+  buildAssistantToolActionSummary,
+  formatAssistantToolActionContent,
+} from "../tool-activity-summary";
 import type { ToolLoopDeps } from "../tool-loop";
 import { getEndpointCapabilities } from "../provider-capabilities";
 import { createHarnessEvent, emitHarnessEvent } from "./events";
@@ -72,20 +76,17 @@ export class DefaultHarnessModelProvider implements HarnessModelProvider {
           : parseToolCalls(cleanedText);
 
       if (!cleanedText && toolCalls.length > 0) {
-        const summary = toolCalls
-          .map(
-            (toolCall) =>
-              `${toolCall.type}(${toolCall.filePath || toolCall.pattern || toolCall.glob || toolCall.query || toolCall.command || toolCall.url || ""})`,
-          )
-          .join(", ");
+        const assistantAction = buildAssistantToolActionSummary(toolCalls);
         session.transcript.push({
           role: "assistant",
-          content: `[Calling tools: ${summary}]`,
+          content: formatAssistantToolActionContent(assistantAction),
+          assistantAction,
+          toolCalls,
         });
         emitHarnessEvent(
           this.deps.onHarnessEvent,
           createHarnessEvent(session.id, "assistant_message_completed", {
-            detail: "tool_summary_placeholder",
+            detail: assistantAction.label,
           }),
         );
       }
