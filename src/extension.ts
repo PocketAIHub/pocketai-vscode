@@ -164,6 +164,20 @@ export function activate(context: vscode.ExtensionContext) {
       await providerInstance?.handleUseSelection();
     }),
   );
+
+  if (context.extensionMode === vscode.ExtensionMode.Test) {
+    context.subscriptions.push(
+      vscode.commands.registerCommand(
+        "pocketai.test.sendPrompt",
+        async (prompt: string) => providerInstance?.sendTestPrompt(prompt),
+      ),
+    );
+    context.subscriptions.push(
+      vscode.commands.registerCommand("pocketai.test.getSidebarSession", () =>
+        providerInstance?.getTestSidebarSession(),
+      ),
+    );
+  }
 }
 
 export function deactivate() {
@@ -775,6 +789,28 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
     );
     const prompt = `Here is code from \`${relativePath}\`:\n\n\`\`\`\n${content}\n\`\`\`\n\nExplain this code.`;
     await this.sendPrompt(sessionId, prompt);
+  }
+
+  async sendTestPrompt(prompt: string) {
+    await this.sendPrompt(this.sessionMgr.sidebarSessionId, String(prompt ?? ""));
+    return this.getTestSidebarSession();
+  }
+
+  getTestSidebarSession() {
+    const session = this.sessionMgr.requireSession(this.sessionMgr.sidebarSessionId);
+    if (!session) return undefined;
+    return {
+      id: session.id,
+      status: session.status,
+      selectedEndpoint: session.selectedEndpoint,
+      selectedModel: session.selectedModel,
+      transcript: session.transcript.map((entry) => ({
+        role: entry.role,
+        content: entry.content,
+      })),
+      endpoints: Array.from(this.endpointMgr.endpointHealthMap.values()),
+      models: this.endpointMgr.getEndpointModels(session.selectedEndpoint),
+    };
   }
 
   /* ── Settings sidebar ── */

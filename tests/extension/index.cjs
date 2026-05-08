@@ -17,6 +17,11 @@ const EXPECTED_COMMANDS = [
   "pocketai.rejectAllInlineChanges",
 ];
 
+const EXPECTED_TEST_COMMANDS = [
+  "pocketai.test.sendPrompt",
+  "pocketai.test.getSidebarSession",
+];
+
 async function resetPocketAiConfig() {
   const config = vscode.workspace.getConfiguration("pocketai");
   await config.update("endpoints", undefined, vscode.ConfigurationTarget.Global);
@@ -71,6 +76,12 @@ async function run() {
         `Expected command to be registered: ${command}`,
       );
     }
+    for (const command of EXPECTED_TEST_COMMANDS) {
+      assert(
+        commands.includes(command),
+        `Expected test command to be registered: ${command}`,
+      );
+    }
 
     await waitFor(
       async () => {
@@ -94,6 +105,7 @@ async function run() {
     ]);
 
     await assertPanelSelectionRoundTrip(fakeEndpoint);
+    await assertSlashCommandRoundTrip(fakeEndpoint);
   } finally {
     await resetPocketAiConfig();
     await fakeEndpoint.close();
@@ -148,6 +160,54 @@ async function assertPanelSelectionRoundTrip(fakeEndpoint) {
   const serializedMessages = JSON.stringify(chatRequest.body.messages);
   assert.match(serializedMessages, /selectedMultiply/);
   assert.match(serializedMessages, /Explain this code/);
+}
+
+async function assertSlashCommandRoundTrip(fakeEndpoint) {
+  const endpointSnapshot = await sendTestPrompt("/endpoint");
+  assert.match(lastTranscriptContent(endpointSnapshot), /Available endpoints:/);
+  assert.match(
+    lastTranscriptContent(endpointSnapshot),
+    /Fake Legacy Secret Endpoint/,
+  );
+  assert.match(lastTranscriptContent(endpointSnapshot), /healthy/);
+  assert.equal(endpointSnapshot.endpoints.length, 1);
+  assert.equal(endpointSnapshot.endpoints[0].url, fakeEndpoint.baseUrl);
+
+  const statusSnapshot = await sendTestPrompt("/status");
+  assert.match(lastTranscriptContent(statusSnapshot), /PocketAI doctor:/);
+  assert.match(
+    lastTranscriptContent(statusSnapshot),
+    /Fake Legacy Secret Endpoint/,
+  );
+  assert.match(lastTranscriptContent(statusSnapshot), /pocketai-test-model/);
+  assert.match(lastTranscriptContent(statusSnapshot), /Structured tools: enabled/);
+
+  const modelRequestCount = fakeEndpoint.modelRequests.length;
+  const refreshSnapshot = await sendTestPrompt("/refresh");
+  assert.equal(
+    refreshSnapshot.status,
+    "Refreshed models for Fake Legacy Secret Endpoint.",
+  );
+  assert.ok(
+    fakeEndpoint.modelRequests.length > modelRequestCount,
+    "Expected /refresh to request the fake endpoint model list.",
+  );
+  assert.deepEqual(refreshSnapshot.models, ["pocketai-test-model"]);
+}
+
+async function sendTestPrompt(prompt) {
+  const snapshot = await vscode.commands.executeCommand(
+    "pocketai.test.sendPrompt",
+    prompt,
+  );
+  assert(snapshot, "Expected test prompt command to return a session snapshot.");
+  return snapshot;
+}
+
+function lastTranscriptContent(snapshot) {
+  const lastEntry = snapshot.transcript.at(-1);
+  assert(lastEntry, "Expected a transcript entry.");
+  return lastEntry.content;
 }
 
 async function createFakeEndpoint() {
