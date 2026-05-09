@@ -50,6 +50,11 @@ async function resetPocketAiConfig() {
     vscode.ConfigurationTarget.Global,
   );
   await config.update(
+    "permissions",
+    undefined,
+    vscode.ConfigurationTarget.Global,
+  );
+  await config.update(
     "contextWindowSize",
     undefined,
     vscode.ConfigurationTarget.Global,
@@ -132,6 +137,8 @@ async function run() {
     await assertSlashCommandRoundTrip(fakeEndpoint);
     await assertStructuredToolActionRoundTrip();
     await assertHoverSymbolRoundTrip();
+    await assertIdeToolPermissionDenyRoundTrip();
+    await assertIdeToolWorktreeRootRoundTrip();
     await assertEditApprovalVisualStateRoundTrip();
     await assertEditRejectionVisualStateRoundTrip();
     await assertStaleEditVisualStateRoundTrip();
@@ -329,6 +336,161 @@ async function assertHoverSymbolRoundTrip() {
     );
   } finally {
     hoverProvider.dispose();
+  }
+}
+
+async function assertIdeToolPermissionDenyRoundTrip() {
+  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+  assert(workspaceFolder, "Expected an extension-test workspace folder.");
+  const deniedUri = vscode.Uri.joinPath(workspaceFolder.uri, "ide-denied.paih");
+  await vscode.workspace.fs.writeFile(
+    deniedUri,
+    Buffer.from("deniedActionTarget\n", "utf8"),
+  );
+
+  let providerCalled = false;
+  const actionProvider = vscode.languages.registerCodeActionsProvider(
+    { scheme: "file", pattern: "**/ide-denied.paih" },
+    {
+      provideCodeActions() {
+        providerCalled = true;
+        return [
+          new vscode.CodeAction("Denied Action", vscode.CodeActionKind.QuickFix),
+        ];
+      },
+    },
+  );
+
+  try {
+    await vscode.commands.executeCommand("pocketai.test.setMode", "ask");
+
+    const pendingSnapshot = await sendTestPrompt(
+      "Exercise IDE permission deny coverage by applying a denied code action.",
+    );
+    const codeActionTool = getLatestToolCall(
+      pendingSnapshot,
+      "apply_code_action",
+    );
+    assert.equal(codeActionTool.status, "pending");
+    assert.equal(codeActionTool.filePath, "ide-denied.paih");
+
+    await vscode.workspace.getConfiguration("pocketai").update(
+      "permissions",
+      { allow: [], deny: ["apply_code_action(ide-denied.paih)"] },
+      vscode.ConfigurationTarget.Global,
+    );
+    await vscode.commands.executeCommand(
+      "pocketai.test.approveToolCall",
+      codeActionTool.id,
+    );
+    const deniedSnapshot = await waitForSessionSnapshot(
+      (snapshot) =>
+        /IDE permission deny coverage complete/.test(
+          lastTranscriptContent(snapshot),
+        ),
+      "IDE tool permission denial to finish with a final response",
+    );
+    const deniedTool = getLatestToolCall(deniedSnapshot, "apply_code_action");
+    assert.equal(deniedTool.status, "executed");
+    assert.match(
+      deniedTool.result || "",
+      /Blocked by permission rule: apply_code_action\(ide-denied\.paih\)/,
+    );
+    assert.equal(
+      providerCalled,
+      false,
+      "Denied IDE tool should not invoke the code action provider.",
+    );
+    assert(
+      deniedSnapshot.harnessState.toolTimeline.some(
+        (item) =>
+          item.toolCallId === codeActionTool.id &&
+          item.status === "failed" &&
+          item.toolType === "apply_code_action",
+      ),
+      "Expected the Activity timeline to show the denied IDE tool as failed.",
+    );
+  } finally {
+    actionProvider.dispose();
+    await vscode.workspace.getConfiguration("pocketai").update(
+      "permissions",
+      undefined,
+      vscode.ConfigurationTarget.Global,
+    );
+  }
+}
+
+async function assertIdeToolWorktreeRootRoundTrip() {
+  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+  assert(workspaceFolder, "Expected an extension-test workspace folder.");
+
+  const mainUri = vscode.Uri.joinPath(workspaceFolder.uri, "worktree-hover.paih");
+  const worktreeRootUri = vscode.Uri.joinPath(
+    workspaceFolder.uri,
+    ".pocketai",
+    "worktrees",
+    "ide-hover",
+  );
+  const worktreeFileUri = vscode.Uri.joinPath(
+    worktreeRootUri,
+    "worktree-hover.paih",
+  );
+
+  await vscode.workspace.fs.writeFile(
+    mainUri,
+    Buffer.from("mainRootSymbol\n", "utf8"),
+  );
+  await vscode.workspace.fs.createDirectory(worktreeRootUri);
+  await vscode.workspace.fs.writeFile(
+    worktreeFileUri,
+    Buffer.from("worktreeRootSymbol\n", "utf8"),
+  );
+
+  const hoverProvider = vscode.languages.registerHoverProvider(
+    { scheme: "file", pattern: "**/worktree-hover.paih" },
+    {
+      provideHover(document) {
+        return new vscode.Hover([
+          new vscode.MarkdownString(
+            [
+              "```txt",
+              document.getText().trim(),
+              "```",
+              `Resolved path: ${document.uri.fsPath}`,
+            ].join("\n"),
+          ),
+        ]);
+      },
+    },
+  );
+
+  try {
+    const entered = await sendTestPrompt("/worktree ide-hover");
+    assert.match(entered.status, /Entered existing worktree/);
+    assert.match(
+      entered.worktreeRoot || "",
+      /\.pocketai[/\\]worktrees[/\\]ide-hover$/,
+    );
+
+    const snapshot = await sendTestPrompt(
+      "Exercise IDE worktree hover coverage by inspecting worktree-hover.paih.",
+    );
+    assert.match(
+      lastTranscriptContent(snapshot),
+      /IDE worktree hover coverage complete/,
+    );
+    const hoverTool = getLatestToolCall(snapshot, "hover_symbol");
+    assert.equal(hoverTool.status, "executed");
+    assert.equal(hoverTool.filePath, "worktree-hover.paih");
+    assert.match(hoverTool.result || "", /worktreeRootSymbol/);
+    assert.doesNotMatch(hoverTool.result || "", /mainRootSymbol/);
+    assert.match(
+      hoverTool.result || "",
+      /\.pocketai[/\\]worktrees[/\\]ide-hover[/\\]worktree-hover\.paih/,
+    );
+  } finally {
+    hoverProvider.dispose();
+    await sendTestPrompt("/worktree exit");
   }
 }
 
@@ -1202,6 +1364,31 @@ function sendSseChatResponse(response, body) {
   const lastMessageText = getLastMessageText(body.messages);
   const scenario = resolveFakeScenario(serializedMessages);
   if (
+    scenario === "ide-permission-deny" &&
+    /Blocked by permission rule: apply_code_action\(ide-denied\.paih\)/.test(
+      lastMessageText,
+    )
+  ) {
+    sendTextChatResponse(response, "IDE permission deny coverage complete.");
+    return;
+  }
+  if (scenario === "ide-permission-deny") {
+    sendStructuredApplyCodeActionToolCall(response);
+    return;
+  }
+  if (
+    scenario === "ide-worktree-hover" &&
+    /Hover info for worktree-hover\.paih:1:0/.test(lastMessageText) &&
+    /worktreeRootSymbol/.test(lastMessageText)
+  ) {
+    sendTextChatResponse(response, "IDE worktree hover coverage complete.");
+    return;
+  }
+  if (scenario === "ide-worktree-hover") {
+    sendStructuredWorktreeHoverToolCall(response);
+    return;
+  }
+  if (
     scenario === "hover-symbol" &&
     /Hover info for hover-target\.paih:1:0/.test(lastMessageText)
   ) {
@@ -1428,6 +1615,8 @@ function resolveFakeScenario(serializedMessages) {
     ["hover-symbol", "Exercise hover symbol IDE coverage"],
     ["background-command", "Exercise background command coverage"],
     ["background-cancel", "Exercise background command cancel coverage"],
+    ["ide-permission-deny", "Exercise IDE permission deny coverage"],
+    ["ide-worktree-hover", "Exercise IDE worktree hover coverage"],
     ["safe-command", "Exercise safe command auto-run coverage"],
     ["command-approval", "Exercise command approval coverage"],
     ["command-rejection", "Exercise command rejection coverage"],
@@ -1567,6 +1756,129 @@ function sendStructuredHoverSymbolToolCall(response) {
                 function: {
                   arguments: JSON.stringify({
                     path: "hover-target.paih",
+                    line: 1,
+                    character: 0,
+                  }),
+                },
+              },
+            ],
+          },
+          finish_reason: null,
+        },
+      ],
+    })}\n\n`,
+  );
+  response.write(
+    `data: ${JSON.stringify({
+      model: "pocketai-test-model",
+      choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
+      usage: { prompt_tokens: 15, completion_tokens: 5 },
+    })}\n\n`,
+  );
+  response.write("data: [DONE]\n\n");
+  response.end();
+}
+
+function sendStructuredApplyCodeActionToolCall(response) {
+  response.write(
+    `data: ${JSON.stringify({
+      model: "pocketai-test-model",
+      choices: [
+        {
+          index: 0,
+          delta: {
+            tool_calls: [
+              {
+                index: 0,
+                id: "call_apply_code_action_denied",
+                type: "function",
+                function: {
+                  name: "apply_code_action",
+                  arguments: "",
+                },
+              },
+            ],
+          },
+          finish_reason: null,
+        },
+      ],
+    })}\n\n`,
+  );
+  response.write(
+    `data: ${JSON.stringify({
+      model: "pocketai-test-model",
+      choices: [
+        {
+          index: 0,
+          delta: {
+            tool_calls: [
+              {
+                index: 0,
+                function: {
+                  arguments: JSON.stringify({
+                    path: "ide-denied.paih",
+                    line: 1,
+                    character: 0,
+                    title: "Denied Action",
+                  }),
+                },
+              },
+            ],
+          },
+          finish_reason: null,
+        },
+      ],
+    })}\n\n`,
+  );
+  response.write(
+    `data: ${JSON.stringify({
+      model: "pocketai-test-model",
+      choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
+      usage: { prompt_tokens: 15, completion_tokens: 5 },
+    })}\n\n`,
+  );
+  response.write("data: [DONE]\n\n");
+  response.end();
+}
+
+function sendStructuredWorktreeHoverToolCall(response) {
+  response.write(
+    `data: ${JSON.stringify({
+      model: "pocketai-test-model",
+      choices: [
+        {
+          index: 0,
+          delta: {
+            tool_calls: [
+              {
+                index: 0,
+                id: "call_hover_worktree",
+                type: "function",
+                function: {
+                  name: "hover_symbol",
+                  arguments: "",
+                },
+              },
+            ],
+          },
+          finish_reason: null,
+        },
+      ],
+    })}\n\n`,
+  );
+  response.write(
+    `data: ${JSON.stringify({
+      model: "pocketai-test-model",
+      choices: [
+        {
+          index: 0,
+          delta: {
+            tool_calls: [
+              {
+                index: 0,
+                function: {
+                  arguments: JSON.stringify({
+                    path: "worktree-hover.paih",
                     line: 1,
                     character: 0,
                   }),

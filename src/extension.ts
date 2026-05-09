@@ -873,6 +873,7 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
       status: session.status,
       selectedEndpoint: session.selectedEndpoint,
       selectedModel: session.selectedModel,
+      worktreeRoot: session.worktreeRoot || undefined,
       mode: session.mode,
       transcript: session.transcript.map((entry) => ({
         role: entry.role,

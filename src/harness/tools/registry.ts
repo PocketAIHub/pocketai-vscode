@@ -35,6 +35,7 @@ import {
   executeDiagnosticsTool,
   executeDocumentSymbolsTool,
   executeHoverSymbolTool,
+  executeIdeToolWithGuards,
   executeOpenFileTool,
   executeOpenDefinitionTool,
   executeWorkspaceSymbolsTool,
@@ -137,52 +138,82 @@ function createBuiltinToolBehaviors(
   diagnostics: {
     approvalPolicy: "always-auto",
     previewKind: "none",
-    execute: async ({ session, toolCall }) => executeDiagnosticsTool(toolCall, session),
+    execute: async ({ session, toolCall }) =>
+      executeIdeToolWithGuards(deps, session, toolCall, () =>
+        executeDiagnosticsTool(toolCall, session),
+      ),
   },
   open_file: {
     approvalPolicy: "always-auto",
     previewKind: "none",
-    execute: async ({ session, toolCall }) => executeOpenFileTool(toolCall, session),
+    execute: async ({ session, toolCall }) =>
+      executeIdeToolWithGuards(deps, session, toolCall, () =>
+        executeOpenFileTool(toolCall, session),
+      ),
   },
   open_definition: {
     approvalPolicy: "always-auto",
     previewKind: "none",
-    execute: async ({ session, toolCall }) => executeOpenDefinitionTool(toolCall, session),
+    execute: async ({ session, toolCall }) =>
+      executeIdeToolWithGuards(deps, session, toolCall, () =>
+        executeOpenDefinitionTool(toolCall, session),
+      ),
   },
   workspace_symbols: {
     approvalPolicy: "always-auto",
     previewKind: "none",
-    execute: async ({ toolCall }) => executeWorkspaceSymbolsTool(toolCall),
+    execute: async ({ session, toolCall }) =>
+      executeIdeToolWithGuards(deps, session, toolCall, () =>
+        executeWorkspaceSymbolsTool(toolCall),
+      ),
   },
   hover_symbol: {
     approvalPolicy: "always-auto",
     previewKind: "none",
-    execute: async ({ session, toolCall }) => executeHoverSymbolTool(toolCall, session),
+    execute: async ({ session, toolCall }) =>
+      executeIdeToolWithGuards(deps, session, toolCall, () =>
+        executeHoverSymbolTool(toolCall, session),
+      ),
   },
   code_actions: {
     approvalPolicy: "always-auto",
     previewKind: "none",
-    execute: async ({ session, toolCall }) => executeCodeActionsTool(toolCall, session),
+    execute: async ({ session, toolCall }) =>
+      executeIdeToolWithGuards(deps, session, toolCall, () =>
+        executeCodeActionsTool(toolCall, session),
+      ),
   },
   apply_code_action: {
     approvalPolicy: "mode-auto",
     previewKind: "none",
-    execute: async ({ session, toolCall }) => executeApplyCodeActionTool(toolCall, session),
+    execute: async ({ session, toolCall }) =>
+      executeIdeToolWithGuards(deps, session, toolCall, () =>
+        executeApplyCodeActionTool(toolCall, session),
+      ),
   },
   go_to_definition: {
     approvalPolicy: "always-auto",
     previewKind: "none",
-    execute: async ({ session, toolCall }) => executeDefinitionTool(toolCall, session),
+    execute: async ({ session, toolCall }) =>
+      executeIdeToolWithGuards(deps, session, toolCall, () =>
+        executeDefinitionTool(toolCall, session),
+      ),
   },
   find_references: {
     approvalPolicy: "always-auto",
     previewKind: "none",
-    execute: async ({ session, toolCall }) => executeReferencesTool(toolCall, session),
+    execute: async ({ session, toolCall }) =>
+      executeIdeToolWithGuards(deps, session, toolCall, () =>
+        executeReferencesTool(toolCall, session),
+      ),
   },
   document_symbols: {
     approvalPolicy: "always-auto",
     previewKind: "none",
-    execute: async ({ session, toolCall }) => executeDocumentSymbolsTool(toolCall, session),
+    execute: async ({ session, toolCall }) =>
+      executeIdeToolWithGuards(deps, session, toolCall, () =>
+        executeDocumentSymbolsTool(toolCall, session),
+      ),
   },
   read_file: {
     approvalPolicy: "always-auto",

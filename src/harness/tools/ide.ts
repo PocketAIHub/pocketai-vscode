@@ -1,14 +1,59 @@
 import * as path from "path";
 import * as vscode from "vscode";
 import type { ChatSession, ToolCall } from "../../types";
+import type { ToolLoopDeps } from "../../tool-loop";
 import { isInsidePath } from "../../helpers";
 import { getSessionWorkspaceRoot } from "../../workspace-roots";
+import { checkPermissionRules } from "../../permissions";
+import { getToolPermissionArg } from "../../permission-workflows";
+import { runHooks } from "../../hooks";
 
 const MAX_DIAGNOSTICS = 100;
 const MAX_LOCATIONS = 25;
 const MAX_SYMBOLS = 200;
 const MAX_HOVER_BLOCKS = 10;
 const MAX_CODE_ACTIONS = 25;
+
+export async function executeIdeToolWithGuards(
+  deps: ToolLoopDeps,
+  session: ChatSession,
+  toolCall: ToolCall,
+  executor: () => Promise<string>,
+): Promise<string> {
+  const rootPath = getIdeWorkspaceRoot(session);
+  if (!rootPath) {
+    return "No workspace folder is open.";
+  }
+
+  const toolArg = getToolPermissionArg(toolCall);
+  const permission = checkPermissionRules(deps.config, toolCall.type, toolArg);
+  if (permission === "deny") {
+    return `Blocked by permission rule: ${toolCall.type}(${toolArg})`;
+  }
+
+  try {
+    await runHooks(deps.config, deps.outputChannel, "preToolUse", {
+      tool: toolCall.type,
+      file: toolCall.filePath,
+    });
+  } catch (error) {
+    return `Blocked by hook: ${(error as Error).message}`;
+  }
+
+  if (toolCall.filePath) {
+    const fullPath = path.resolve(rootPath, toolCall.filePath);
+    if (!isInsidePath(rootPath, fullPath)) {
+      return "Error: Path is outside the workspace.";
+    }
+  }
+
+  const result = await executor();
+  void runHooks(deps.config, deps.outputChannel, "postToolUse", {
+    tool: toolCall.type,
+    file: toolCall.filePath,
+  });
+  return result;
+}
 
 export async function executeDiagnosticsTool(
   toolCall: ToolCall,
@@ -302,7 +347,16 @@ export async function executeApplyCodeActionTool(
 
   let appliedEditEntries = 0;
   if (match.edit) {
-    appliedEditEntries = Array.from(match.edit.entries()).length;
+    const editEntries = Array.from(match.edit.entries());
+    const outsideEntry = editEntries.find(
+      ([uri]) =>
+        uri.scheme !== "file" || !isInsidePath(target.rootPath, uri.fsPath),
+    );
+    if (outsideEntry) {
+      return `Code action "${actionTitle}" produced an edit outside the workspace: ${formatUriForDisplay(outsideEntry[0])}.`;
+    }
+
+    appliedEditEntries = editEntries.length;
     const applied = await vscode.workspace.applyEdit(match.edit);
     if (!applied) {
       return `Failed to apply code action "${actionTitle}".`;
@@ -419,6 +473,7 @@ async function resolveWorkspaceDocument(
   uri: vscode.Uri;
   document: vscode.TextDocument;
   relativePath: string;
+  rootPath: string;
 } | undefined> {
   const rootPath = getIdeWorkspaceRoot(session);
   if (!rootPath) return undefined;
@@ -433,6 +488,7 @@ async function resolveWorkspaceDocument(
       uri,
       document,
       relativePath: path.relative(rootPath, fullPath) || path.basename(fullPath),
+      rootPath,
     };
   } catch {
     return undefined;
