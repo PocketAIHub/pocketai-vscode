@@ -633,6 +633,7 @@ export async function executeToolCall(
           cmd,
           rootPath,
           outputChannel,
+          toolCall.id,
         );
         return `Command started in background (id: ${taskId}): \`${cmd}\`\nUse run_command with "bg_status ${taskId}" to check status.`;
       }

@@ -8,6 +8,7 @@ import type {
 type CommandTask = {
   id: string;
   sessionId: string;
+  toolCallId?: string;
   cmd: string;
   cwd: string;
   proc?: child_process.ChildProcess;
@@ -46,10 +47,15 @@ function emitCommandTask(task: CommandTask) {
   }
 }
 
+function isTrackedCommandTask(taskId: string, task: CommandTask) {
+  return commandTasks.get(taskId) === task;
+}
+
 function toCommandTaskSnapshot(task: CommandTask): CommandTaskSnapshot {
   return {
     id: task.id,
     sessionId: task.sessionId,
+    toolCallId: task.toolCallId,
     command: task.cmd,
     kind: task.kind ?? "background",
     status: task.status,
@@ -72,6 +78,7 @@ export function restoreCommandTaskSnapshots(
     const restored: CommandTask = {
       id: snapshot.id,
       sessionId: snapshot.sessionId,
+      toolCallId: snapshot.toolCallId,
       cmd: snapshot.command,
       cwd: snapshot.cwd || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || "",
       kind: snapshot.kind ?? "background",
@@ -103,10 +110,12 @@ function runCommandInBackground(
   cwd: string,
   outputChannel: vscode.OutputChannel,
   taskId: string,
+  toolCallId?: string,
 ): CommandTask {
   const task: CommandTask = {
     id: taskId,
     sessionId,
+    toolCallId,
     cmd,
     cwd,
     kind: "background",
@@ -117,6 +126,7 @@ function runCommandInBackground(
   };
 
   outputChannel.appendLine(`▶ [${taskId}] Background: ${cmd}`);
+  commandTasks.set(taskId, task);
   emitCommandTask(task);
   const proc = child_process.spawn("sh", ["-c", cmd], {
     cwd,
@@ -125,6 +135,7 @@ function runCommandInBackground(
   task.proc = proc;
 
   proc.stdout?.on("data", (data: Buffer) => {
+    if (!isTrackedCommandTask(taskId, task)) return;
     const chunk = data.toString();
     task.output += chunk;
     task.updatedAt = Date.now();
@@ -133,6 +144,7 @@ function runCommandInBackground(
   });
 
   proc.stderr?.on("data", (data: Buffer) => {
+    if (!isTrackedCommandTask(taskId, task)) return;
     const chunk = data.toString();
     task.output += chunk;
     task.updatedAt = Date.now();
@@ -141,6 +153,7 @@ function runCommandInBackground(
   });
 
   proc.on("close", (code) => {
+    if (!isTrackedCommandTask(taskId, task)) return;
     if (task.status === "cancelled") {
       task.exitCode = code ?? 130;
       task.completedAt = Date.now();
@@ -163,6 +176,7 @@ function runCommandInBackground(
   });
 
   proc.on("error", (err) => {
+    if (!isTrackedCommandTask(taskId, task)) return;
     task.status = "failed";
     task.output += `\nError: ${err.message}`;
     task.completedAt = Date.now();
@@ -178,10 +192,17 @@ export function startBackgroundCommand(
   cmd: string,
   cwd: string,
   outputChannel: vscode.OutputChannel,
+  toolCallId?: string,
 ) {
   const taskId = `bg_${Date.now().toString(36)}`;
-  const task = runCommandInBackground(sessionId, cmd, cwd, outputChannel, taskId);
-  commandTasks.set(taskId, task);
+  runCommandInBackground(
+    sessionId,
+    cmd,
+    cwd,
+    outputChannel,
+    taskId,
+    toolCallId,
+  );
   return taskId;
 }
 

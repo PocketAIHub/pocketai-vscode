@@ -200,6 +200,20 @@ export function activate(context: vscode.ExtensionContext) {
           providerInstance?.approveTestToolCall(toolCallId, false),
       ),
     );
+    context.subscriptions.push(
+      vscode.commands.registerCommand(
+        "pocketai.test.approveChangeSet",
+        async (changeSetId: string) =>
+          providerInstance?.approveTestChangeSet(changeSetId, true),
+      ),
+    );
+    context.subscriptions.push(
+      vscode.commands.registerCommand(
+        "pocketai.test.rejectChangeSet",
+        async (changeSetId: string) =>
+          providerInstance?.approveTestChangeSet(changeSetId, false),
+      ),
+    );
   }
 }
 
@@ -390,9 +404,13 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
     upsertBackgroundTask(session, {
       id: task.id,
       command: task.command,
+      kind: task.kind,
+      toolCallId: task.toolCallId,
       status: task.status,
       outputPreview: task.outputPreview,
       exitCode: task.exitCode,
+      startedAt: task.startedAt,
+      completedAt: task.completedAt,
       updatedAt: task.updatedAt,
       cwd: task.cwd,
     });
@@ -827,6 +845,15 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
     return this.getTestSidebarSession();
   }
 
+  async approveTestChangeSet(changeSetId: string, approved: boolean) {
+    await this.handleChangeSetApproval(
+      this.sessionMgr.sidebarSessionId,
+      changeSetId,
+      approved,
+    );
+    return this.getTestSidebarSession();
+  }
+
   async setTestMode(mode: import("./types").InteractionMode) {
     const session = this.sessionMgr.requireSession(this.sessionMgr.sidebarSessionId);
     if (session && (mode === "ask" || mode === "auto" || mode === "plan")) {
@@ -856,6 +883,8 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
           id: toolCall.id,
           type: toolCall.type,
           filePath: toolCall.filePath,
+          command: toolCall.command,
+          background: toolCall.background,
           status: toolCall.status,
           result: toolCall.result,
         })),

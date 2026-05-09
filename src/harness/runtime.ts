@@ -2,6 +2,7 @@ import type { ChatSession, ToolCall } from "../types";
 import type { ToolLoopDeps } from "../tool-loop";
 import { executeToolCallWithHooks } from "../tool-executor";
 import { createHarnessEvent, emitHarnessEvent } from "./events";
+import { looksLikeFailedToolResult } from "./state";
 import {
   isAllowedSubagentPath,
   isAllowedSubagentTool,
@@ -25,6 +26,16 @@ export class DefaultHarnessToolRuntime implements HarnessToolRuntime {
 
     try {
       const result = await this.executeUnchecked(session, toolCall);
+      if (looksLikeFailedToolResult(result)) {
+        emitHarnessEvent(
+          this.deps.onHarnessEvent,
+          createHarnessEvent(session.id, "tool_call_failed", {
+            toolCallId: toolCall.id,
+            detail: result,
+          }),
+        );
+        return result;
+      }
       emitHarnessEvent(
         this.deps.onHarnessEvent,
         createHarnessEvent(session.id, "tool_call_completed", {

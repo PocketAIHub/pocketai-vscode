@@ -296,7 +296,7 @@ function resolveToolTimelineStatus(
   return "detected";
 }
 
-function looksLikeFailedToolResult(result: string): boolean {
+export function looksLikeFailedToolResult(result: string): boolean {
   return /^(?:Tool execution error|Command failed|Error:|Blocked by permission rule)/i.test(
     result.trim(),
   );

@@ -3,6 +3,10 @@ const http = require("node:http");
 const vscode = require("vscode");
 
 const EXTENSION_ID = "trevorwood.pocketai-vscode";
+const BACKGROUND_COMPLETE_COMMAND =
+  "node -e \"setTimeout(() => console.log('background command complete'), 250)\"";
+const BACKGROUND_CANCEL_COMMAND =
+  "node -e \"setTimeout(() => console.log('background cancel should not finish'), 5000)\"";
 
 const EXPECTED_COMMANDS = [
   "pocketai.openPanel",
@@ -23,6 +27,8 @@ const EXPECTED_TEST_COMMANDS = [
   "pocketai.test.setMode",
   "pocketai.test.approveToolCall",
   "pocketai.test.rejectToolCall",
+  "pocketai.test.approveChangeSet",
+  "pocketai.test.rejectChangeSet",
 ];
 
 async function resetPocketAiConfig() {
@@ -35,6 +41,11 @@ async function resetPocketAiConfig() {
   );
   await config.update(
     "useStructuredTools",
+    undefined,
+    vscode.ConfigurationTarget.Global,
+  );
+  await config.update(
+    "useIntegratedTerminal",
     undefined,
     vscode.ConfigurationTarget.Global,
   );
@@ -64,6 +75,11 @@ async function run() {
     );
     await vscode.workspace.getConfiguration("pocketai").update(
       "includeWorkspaceContext",
+      false,
+      vscode.ConfigurationTarget.Global,
+    );
+    await vscode.workspace.getConfiguration("pocketai").update(
+      "useIntegratedTerminal",
       false,
       vscode.ConfigurationTarget.Global,
     );
@@ -113,6 +129,13 @@ async function run() {
     await assertEditApprovalVisualStateRoundTrip();
     await assertEditRejectionVisualStateRoundTrip();
     await assertStaleEditVisualStateRoundTrip();
+    await assertMultiEditChangeSetApprovalRoundTrip();
+    await assertMultiEditChangeSetRejectionRoundTrip();
+    await assertSafeCommandAutoRunRoundTrip();
+    await assertCommandApprovalRoundTrip();
+    await assertCommandRejectionRoundTrip();
+    await assertFailedCommandTimelineRoundTrip();
+    await assertBackgroundCommandTaskRoundTrip();
   } finally {
     await resetPocketAiConfig();
     await fakeEndpoint.close();
@@ -467,6 +490,423 @@ async function assertStaleEditVisualStateRoundTrip() {
   );
 }
 
+async function assertMultiEditChangeSetApprovalRoundTrip() {
+  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+  assert(workspaceFolder, "Expected an extension-test workspace folder.");
+  const firstUri = vscode.Uri.joinPath(workspaceFolder.uri, "multi-approve-a.js");
+  const secondUri = vscode.Uri.joinPath(workspaceFolder.uri, "multi-approve-b.js");
+  await vscode.workspace.fs.writeFile(
+    firstUri,
+    Buffer.from("export const alpha = 1;\n", "utf8"),
+  );
+  await vscode.workspace.fs.writeFile(
+    secondUri,
+    Buffer.from("export const beta = 1;\n", "utf8"),
+  );
+  await vscode.commands.executeCommand("pocketai.test.setMode", "ask");
+
+  const pendingSnapshot = await sendTestPrompt(
+    "Exercise multi-edit change set approval coverage by updating multi-approve-a.js and multi-approve-b.js.",
+  );
+  const changeSet = getPendingChangeSet(pendingSnapshot, [
+    "multi-approve-a.js",
+    "multi-approve-b.js",
+  ]);
+  assert.equal(changeSet.toolCallIds.length, 2);
+  assert.equal(
+    pendingSnapshot.harnessState.pendingApprovals.filter((approval) =>
+      changeSet.toolCallIds.includes(approval.toolCallId),
+    ).length,
+    2,
+  );
+  assert.equal(
+    pendingSnapshot.harnessState.pendingDiffs.filter(
+      (diff) =>
+        changeSet.toolCallIds.includes(diff.toolCallId) &&
+        diff.status === "pending" &&
+        diff.previewKind === "inline-diff",
+    ).length,
+    2,
+  );
+  assert.equal(
+    pendingSnapshot.harnessState.toolTimeline.filter(
+      (item) =>
+        changeSet.toolCallIds.includes(item.toolCallId) &&
+        item.status === "pending_approval",
+    ).length,
+    2,
+  );
+
+  await vscode.commands.executeCommand(
+    "pocketai.test.approveChangeSet",
+    changeSet.id,
+  );
+  const approvedSnapshot = await waitForSessionSnapshot(
+    (snapshot) =>
+      /Multi-edit change set approval complete/.test(lastTranscriptContent(snapshot)),
+    "multi-edit change set approval to finish with a final response",
+  );
+
+  assert.equal(
+    Buffer.from(await vscode.workspace.fs.readFile(firstUri)).toString("utf8"),
+    "export const alpha = 2;\n",
+  );
+  assert.equal(
+    Buffer.from(await vscode.workspace.fs.readFile(secondUri)).toString("utf8"),
+    "export const beta = 2;\n",
+  );
+  assert.equal(
+    approvedSnapshot.harnessState.pendingDiffs.filter(
+      (diff) =>
+        changeSet.toolCallIds.includes(diff.toolCallId) &&
+        diff.status === "applied",
+    ).length,
+    2,
+  );
+  assert(
+    approvedSnapshot.harnessState.changeSets.some(
+      (item) => item.id === changeSet.id && item.status === "applied",
+    ),
+    "Expected the multi-edit change set to be applied.",
+  );
+  assert.equal(
+    approvedSnapshot.harnessState.toolTimeline.filter(
+      (item) =>
+        changeSet.toolCallIds.includes(item.toolCallId) &&
+        item.status === "succeeded",
+    ).length,
+    2,
+  );
+}
+
+async function assertMultiEditChangeSetRejectionRoundTrip() {
+  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+  assert(workspaceFolder, "Expected an extension-test workspace folder.");
+  const firstUri = vscode.Uri.joinPath(workspaceFolder.uri, "multi-reject-a.js");
+  const secondUri = vscode.Uri.joinPath(workspaceFolder.uri, "multi-reject-b.js");
+  await vscode.workspace.fs.writeFile(
+    firstUri,
+    Buffer.from("export const rejectAlpha = 1;\n", "utf8"),
+  );
+  await vscode.workspace.fs.writeFile(
+    secondUri,
+    Buffer.from("export const rejectBeta = 1;\n", "utf8"),
+  );
+  await vscode.commands.executeCommand("pocketai.test.setMode", "ask");
+
+  const pendingSnapshot = await sendTestPrompt(
+    "Exercise multi-edit change set rejection coverage by updating multi-reject-a.js and multi-reject-b.js.",
+  );
+  const changeSet = getPendingChangeSet(pendingSnapshot, [
+    "multi-reject-a.js",
+    "multi-reject-b.js",
+  ]);
+
+  await vscode.commands.executeCommand(
+    "pocketai.test.rejectChangeSet",
+    changeSet.id,
+  );
+  const rejectedSnapshot = await waitForSessionSnapshot(
+    (snapshot) =>
+      /Multi-edit change set rejection complete/.test(lastTranscriptContent(snapshot)),
+    "multi-edit change set rejection to finish with a final response",
+  );
+
+  assert.equal(
+    Buffer.from(await vscode.workspace.fs.readFile(firstUri)).toString("utf8"),
+    "export const rejectAlpha = 1;\n",
+  );
+  assert.equal(
+    Buffer.from(await vscode.workspace.fs.readFile(secondUri)).toString("utf8"),
+    "export const rejectBeta = 1;\n",
+  );
+  assert.equal(
+    rejectedSnapshot.harnessState.pendingDiffs.filter(
+      (diff) =>
+        changeSet.toolCallIds.includes(diff.toolCallId) &&
+        diff.status === "rejected",
+    ).length,
+    2,
+  );
+  assert(
+    rejectedSnapshot.harnessState.changeSets.some(
+      (item) => item.id === changeSet.id && item.status === "rejected",
+    ),
+    "Expected the multi-edit change set to be rejected.",
+  );
+  assert.equal(
+    rejectedSnapshot.harnessState.toolTimeline.filter(
+      (item) =>
+        changeSet.toolCallIds.includes(item.toolCallId) &&
+        item.status === "rejected",
+    ).length,
+    2,
+  );
+}
+
+async function assertSafeCommandAutoRunRoundTrip() {
+  await vscode.commands.executeCommand("pocketai.test.setMode", "auto");
+
+  const snapshot = await sendTestPrompt(
+    "Exercise safe command auto-run coverage by running pwd.",
+  );
+  assert.match(lastTranscriptContent(snapshot), /Safe command auto-run complete/);
+  const commandTool = getLatestToolCall(snapshot, "run_command", "pwd");
+  assert.equal(commandTool.status, "executed");
+  assert.equal(snapshot.harnessState.pendingApprovals.length, 0);
+  assert(
+    snapshot.harnessState.toolTimeline.some(
+      (item) =>
+        item.toolCallId === commandTool.id &&
+        item.status === "succeeded" &&
+        item.command === "pwd" &&
+        item.commandRisk === "safe",
+    ),
+    "Expected the Activity timeline to show safe command success.",
+  );
+  assert(
+    snapshot.harnessState.backgroundTasks.some(
+      (task) =>
+        task.toolCallId === commandTool.id &&
+        task.kind === "foreground" &&
+        task.status === "completed",
+    ),
+    "Expected the foreground command task to complete.",
+  );
+}
+
+async function assertCommandApprovalRoundTrip() {
+  await vscode.commands.executeCommand("pocketai.test.setMode", "ask");
+
+  const pendingSnapshot = await sendTestPrompt(
+    "Exercise command approval coverage by running an approved node command.",
+  );
+  const commandTool = getPendingCommandTool(
+    pendingSnapshot,
+    "node -e \"console.log('approved command path')\"",
+  );
+  assert.deepEqual(pendingSnapshot.harnessState.pendingApprovals, [
+    {
+      toolCallId: commandTool.id,
+      toolType: "run_command",
+      filePath: "",
+      commandRisk: "writes",
+    },
+  ]);
+  assert(
+    pendingSnapshot.harnessState.toolTimeline.some(
+      (item) =>
+        item.toolCallId === commandTool.id &&
+        item.status === "pending_approval" &&
+        item.commandRisk === "writes",
+    ),
+    "Expected the Activity timeline to show command approval pending.",
+  );
+
+  await vscode.commands.executeCommand("pocketai.test.approveToolCall", commandTool.id);
+  const approvedSnapshot = await waitForSessionSnapshot(
+    (snapshot) =>
+      /Command approval coverage complete/.test(lastTranscriptContent(snapshot)),
+    "approved command flow to finish with a final response",
+  );
+  assert(
+    approvedSnapshot.harnessState.toolTimeline.some(
+      (item) => item.toolCallId === commandTool.id && item.status === "succeeded",
+    ),
+    "Expected the Activity timeline to show approved command success.",
+  );
+  assert(
+    approvedSnapshot.harnessState.backgroundTasks.some(
+      (task) =>
+        task.toolCallId === commandTool.id &&
+        task.status === "completed" &&
+        /approved command path/.test(task.outputPreview),
+    ),
+    "Expected the approved command output to be tracked.",
+  );
+}
+
+async function assertCommandRejectionRoundTrip() {
+  await vscode.commands.executeCommand("pocketai.test.setMode", "ask");
+
+  const pendingSnapshot = await sendTestPrompt(
+    "Exercise command rejection coverage by running a rejected node command.",
+  );
+  const commandTool = getPendingCommandTool(
+    pendingSnapshot,
+    "node -e \"console.log('rejected command path')\"",
+  );
+
+  await vscode.commands.executeCommand("pocketai.test.rejectToolCall", commandTool.id);
+  const rejectedSnapshot = await waitForSessionSnapshot(
+    (snapshot) =>
+      /Command rejection coverage complete/.test(lastTranscriptContent(snapshot)),
+    "rejected command flow to finish with a final response",
+  );
+  assert(
+    rejectedSnapshot.harnessState.toolTimeline.some(
+      (item) => item.toolCallId === commandTool.id && item.status === "rejected",
+    ),
+    "Expected the Activity timeline to show rejected command.",
+  );
+  assert.equal(
+    rejectedSnapshot.harnessState.backgroundTasks.some(
+      (task) => task.toolCallId === commandTool.id,
+    ),
+    false,
+    "Rejected command should not create a tracked command task.",
+  );
+}
+
+async function assertFailedCommandTimelineRoundTrip() {
+  await vscode.commands.executeCommand("pocketai.test.setMode", "auto");
+
+  const snapshot = await sendTestPrompt(
+    "Exercise failed command timeline coverage by running a missing node test.",
+  );
+  assert.match(lastTranscriptContent(snapshot), /Failed command coverage complete/);
+  const commandTool = getLatestToolCall(
+    snapshot,
+    "run_command",
+    "node --test missing-pocketai-test-file.test.js",
+  );
+  assert.equal(commandTool.status, "executed");
+  assert.match(commandTool.result || "", /^Command failed/);
+  assert(
+    snapshot.harnessState.toolTimeline.some(
+      (item) => item.toolCallId === commandTool.id && item.status === "failed",
+    ),
+    "Expected the Activity timeline to show failed command.",
+  );
+  assert(
+    snapshot.harnessState.backgroundTasks.some(
+      (task) =>
+        task.toolCallId === commandTool.id &&
+        task.status === "failed",
+    ),
+    "Expected the failed foreground command task to be tracked.",
+  );
+}
+
+async function assertBackgroundCommandTaskRoundTrip() {
+  await sendTestPrompt("/jobs clear");
+  await vscode.commands.executeCommand("pocketai.test.setMode", "ask");
+
+  const pendingSnapshot = await sendTestPrompt(
+    "Exercise background command coverage by starting a tracked background task.",
+  );
+  const commandTool = getPendingCommandTool(
+    pendingSnapshot,
+    BACKGROUND_COMPLETE_COMMAND,
+  );
+  assert.equal(commandTool.background, true);
+
+  await vscode.commands.executeCommand("pocketai.test.approveToolCall", commandTool.id);
+  const startedSnapshot = await waitForSessionSnapshot(
+    (snapshot) =>
+      /Background command coverage complete/.test(lastTranscriptContent(snapshot)) &&
+      !!findBackgroundTask(snapshot, BACKGROUND_COMPLETE_COMMAND),
+    "background command flow to start and finish with a final response",
+  );
+  const startedTask = getBackgroundTask(
+    startedSnapshot,
+    BACKGROUND_COMPLETE_COMMAND,
+  );
+  assert.equal(startedTask.kind, "background");
+  assert.equal(startedTask.toolCallId, commandTool.id);
+  assert.equal(typeof startedTask.startedAt, "number");
+  assert(startedTask.cwd, "Expected background task cwd to be tracked.");
+
+  const completedSnapshot = await waitForSessionSnapshot(
+    (snapshot) =>
+      findBackgroundTask(snapshot, BACKGROUND_COMPLETE_COMMAND)?.status ===
+      "completed",
+    "background command to complete",
+    8000,
+  );
+  const completedTask = getBackgroundTask(
+    completedSnapshot,
+    BACKGROUND_COMPLETE_COMMAND,
+  );
+  assert.equal(completedTask.kind, "background");
+  assert.equal(completedTask.toolCallId, commandTool.id);
+  assert.equal(completedTask.status, "completed");
+  assert.equal(typeof completedTask.completedAt, "number");
+  assert.match(completedTask.outputPreview, /background command complete/);
+
+  const listSnapshot = await sendTestPrompt("/jobs");
+  assert.match(lastTranscriptContent(listSnapshot), /Command tasks:/);
+  assert.match(lastTranscriptContent(listSnapshot), new RegExp(escapeRegExp(completedTask.id)));
+  assert.match(lastTranscriptContent(listSnapshot), /background command complete|completed/);
+
+  const detailsSnapshot = await sendTestPrompt(`/jobs ${completedTask.id}`);
+  assert.match(
+    lastTranscriptContent(detailsSnapshot),
+    new RegExp(`Background task ${escapeRegExp(completedTask.id)} \\(completed\\)`),
+  );
+  assert.match(lastTranscriptContent(detailsSnapshot), /background command complete/);
+
+  const rerunSnapshot = await sendTestPrompt(`/jobs rerun ${completedTask.id}`);
+  const rerunText = lastTranscriptContent(rerunSnapshot);
+  assert.match(rerunText, /Reran background task/);
+  const rerunTaskId = extractRerunTaskId(rerunText);
+  const rerunCompleteSnapshot = await waitForSessionSnapshot(
+    (snapshot) =>
+      snapshot.harnessState.backgroundTasks.some(
+        (task) => task.id === rerunTaskId && task.status === "completed",
+      ),
+    "rerun background command to complete",
+    8000,
+  );
+  assert.match(
+    getBackgroundTaskById(rerunCompleteSnapshot, rerunTaskId).outputPreview,
+    /background command complete/,
+  );
+
+  const cancelPendingSnapshot = await sendTestPrompt(
+    "Exercise background command cancel coverage by starting a cancellable background task.",
+  );
+  const cancelTool = getPendingCommandTool(
+    cancelPendingSnapshot,
+    BACKGROUND_CANCEL_COMMAND,
+  );
+  assert.equal(cancelTool.background, true);
+
+  await vscode.commands.executeCommand("pocketai.test.approveToolCall", cancelTool.id);
+  const cancelReadySnapshot = await waitForSessionSnapshot(
+    (snapshot) =>
+      /Background cancel coverage ready/.test(lastTranscriptContent(snapshot)) &&
+      findBackgroundTask(snapshot, BACKGROUND_CANCEL_COMMAND)?.status === "running",
+    "cancellable background command to start",
+  );
+  const cancelTask = getBackgroundTask(
+    cancelReadySnapshot,
+    BACKGROUND_CANCEL_COMMAND,
+  );
+  assert.equal(cancelTask.kind, "background");
+  assert.equal(cancelTask.toolCallId, cancelTool.id);
+
+  const cancelSnapshot = await sendTestPrompt(`/jobs cancel ${cancelTask.id}`);
+  assert.match(lastTranscriptContent(cancelSnapshot), /Cancellation requested/);
+  const cancelledSnapshot = await waitForSessionSnapshot(
+    (snapshot) =>
+      findBackgroundTask(snapshot, BACKGROUND_CANCEL_COMMAND)?.status ===
+      "cancelled",
+    "background command cancellation to be reflected",
+  );
+  assert.match(
+    getBackgroundTask(cancelledSnapshot, BACKGROUND_CANCEL_COMMAND).outputPreview,
+    /Cancelled by user/,
+  );
+
+  const clearSnapshot = await sendTestPrompt("/jobs clear");
+  assert.match(
+    lastTranscriptContent(clearSnapshot),
+    /Cleared \d+ finished background commands?\./,
+  );
+  assert.deepEqual(clearSnapshot.harnessState.backgroundTasks, []);
+}
+
 function getPendingEditTool(snapshot, filePath) {
   const assistantActionEntry = snapshot.transcript.find(
     (entry) =>
@@ -488,6 +928,72 @@ function getPendingEditTool(snapshot, filePath) {
   assert(editTool, `Expected a pending edit_file call for ${filePath}.`);
   assert.equal(editTool.status, "pending");
   return editTool;
+}
+
+function getPendingCommandTool(snapshot, command) {
+  const toolCall = getLatestToolCall(snapshot, "run_command", command);
+  assert.equal(toolCall.status, "pending");
+  return toolCall;
+}
+
+function getLatestToolCall(snapshot, type, command) {
+  for (let index = snapshot.transcript.length - 1; index >= 0; index -= 1) {
+    const entry = snapshot.transcript[index];
+    const toolCall = entry.toolCalls?.find(
+      (candidate) =>
+        candidate.type === type &&
+        (command === undefined || candidate.command === command),
+    );
+    if (toolCall) return toolCall;
+  }
+  assert.fail(
+    `Expected latest ${type} tool call${command ? ` for ${command}` : ""}.`,
+  );
+}
+
+function findBackgroundTask(snapshot, command) {
+  return snapshot.harnessState.backgroundTasks.find(
+    (task) => task.command === command,
+  );
+}
+
+function getBackgroundTask(snapshot, command) {
+  const task = findBackgroundTask(snapshot, command);
+  assert(task, `Expected background task for command: ${command}`);
+  return task;
+}
+
+function getBackgroundTaskById(snapshot, taskId) {
+  const task = snapshot.harnessState.backgroundTasks.find(
+    (candidate) => candidate.id === taskId,
+  );
+  assert(task, `Expected background task ${taskId}.`);
+  return task;
+}
+
+function extractRerunTaskId(text) {
+  const match = /\bas (bg_[a-z0-9]+):/.exec(text);
+  assert(match, `Expected rerun task id in: ${text}`);
+  return match[1];
+}
+
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function getPendingChangeSet(snapshot, filePaths) {
+  const expected = new Set(filePaths);
+  const changeSet = snapshot.harnessState.changeSets.find(
+    (item) =>
+      item.status === "pending" &&
+      item.filePaths.length === expected.size &&
+      item.filePaths.every((filePath) => expected.has(filePath)),
+  );
+  assert(
+    changeSet,
+    `Expected pending change set for ${filePaths.join(", ")}.`,
+  );
+  return changeSet;
 }
 
 async function sendTestPrompt(prompt) {
@@ -592,14 +1098,149 @@ function sendSseChatResponse(response, body) {
     connection: "keep-alive",
   });
   const serializedMessages = JSON.stringify(body.messages);
+  const lastMessageText = getLastMessageText(body.messages);
+  const scenario = resolveFakeScenario(serializedMessages);
   if (
-    /Exercise stale edit visual coverage/.test(serializedMessages) &&
-    /pending edit no longer matches the current file contents/.test(serializedMessages)
+    scenario === "background-command" &&
+    /Command started in background/.test(lastMessageText)
+  ) {
+    sendTextChatResponse(response, "Background command coverage complete.");
+    return;
+  }
+  if (scenario === "background-command") {
+    sendStructuredRunCommandToolCall(response, {
+      id: "call_cmd_background_complete",
+      command: BACKGROUND_COMPLETE_COMMAND,
+      background: true,
+    });
+    return;
+  }
+  if (
+    scenario === "background-cancel" &&
+    /Command started in background/.test(lastMessageText)
+  ) {
+    sendTextChatResponse(response, "Background cancel coverage ready.");
+    return;
+  }
+  if (scenario === "background-cancel") {
+    sendStructuredRunCommandToolCall(response, {
+      id: "call_cmd_background_cancel",
+      command: BACKGROUND_CANCEL_COMMAND,
+      background: true,
+    });
+    return;
+  }
+  if (scenario === "safe-command" && /Command: `pwd`/.test(lastMessageText)) {
+    sendTextChatResponse(response, "Safe command auto-run complete.");
+    return;
+  }
+  if (scenario === "safe-command") {
+    sendStructuredRunCommandToolCall(response, {
+      id: "call_cmd_safe_pwd",
+      command: "pwd",
+    });
+    return;
+  }
+  if (
+    scenario === "command-approval" &&
+    /approved command path/.test(lastMessageText)
+  ) {
+    sendTextChatResponse(response, "Command approval coverage complete.");
+    return;
+  }
+  if (scenario === "command-approval") {
+    sendStructuredRunCommandToolCall(response, {
+      id: "call_cmd_approved",
+      command: "node -e \"console.log('approved command path')\"",
+    });
+    return;
+  }
+  if (
+    scenario === "command-rejection" &&
+    /User rejected this change/.test(lastMessageText)
+  ) {
+    sendTextChatResponse(response, "Command rejection coverage complete.");
+    return;
+  }
+  if (scenario === "command-rejection") {
+    sendStructuredRunCommandToolCall(response, {
+      id: "call_cmd_rejected",
+      command: "node -e \"console.log('rejected command path')\"",
+    });
+    return;
+  }
+  if (
+    scenario === "failed-command" &&
+    /^Command failed/m.test(lastMessageText)
+  ) {
+    sendTextChatResponse(response, "Failed command coverage complete.");
+    return;
+  }
+  if (scenario === "failed-command") {
+    sendStructuredRunCommandToolCall(response, {
+      id: "call_cmd_failed",
+      command: "node --test missing-pocketai-test-file.test.js",
+    });
+    return;
+  }
+  if (
+    scenario === "multi-edit-approval" &&
+    /Successfully edited `multi-approve-b\.js`/.test(lastMessageText)
+  ) {
+    sendTextChatResponse(response, "Multi-edit change set approval complete.");
+    return;
+  }
+  if (scenario === "multi-edit-approval") {
+    sendStructuredMultiEditFileToolCalls(response, {
+      idPrefix: "multi_approve",
+      edits: [
+        {
+          path: "multi-approve-a.js",
+          oldString: "export const alpha = 1;",
+          newString: "export const alpha = 2;",
+        },
+        {
+          path: "multi-approve-b.js",
+          oldString: "export const beta = 1;",
+          newString: "export const beta = 2;",
+        },
+      ],
+    });
+    return;
+  }
+  if (
+    scenario === "multi-edit-rejection" &&
+    /User rejected this change/.test(lastMessageText)
+  ) {
+    sendTextChatResponse(response, "Multi-edit change set rejection complete.");
+    return;
+  }
+  if (scenario === "multi-edit-rejection") {
+    sendStructuredMultiEditFileToolCalls(response, {
+      idPrefix: "multi_reject",
+      edits: [
+        {
+          path: "multi-reject-a.js",
+          oldString: "export const rejectAlpha = 1;",
+          newString: "export const rejectAlpha = 2;",
+        },
+        {
+          path: "multi-reject-b.js",
+          oldString: "export const rejectBeta = 1;",
+          newString: "export const rejectBeta = 2;",
+        },
+      ],
+    });
+    return;
+  }
+  if (
+    scenario === "stale-edit" &&
+    /pending edit no longer matches the current file contents/.test(lastMessageText)
   ) {
     sendTextChatResponse(response, "Stale edit coverage complete.");
     return;
   }
-  if (/Exercise stale edit visual coverage/.test(serializedMessages)) {
+  if (scenario === "stale-edit") {
     sendStructuredEditFileToolCalls(response, {
       idPrefix: "stale",
       path: "stale-target.js",
@@ -609,13 +1250,13 @@ function sendSseChatResponse(response, body) {
     return;
   }
   if (
-    /Exercise edit rejection visual coverage/.test(serializedMessages) &&
-    /User rejected this change/.test(serializedMessages)
+    scenario === "edit-rejection" &&
+    /User rejected this change/.test(lastMessageText)
   ) {
     sendTextChatResponse(response, "Edit rejection coverage complete.");
     return;
   }
-  if (/Exercise edit rejection visual coverage/.test(serializedMessages)) {
+  if (scenario === "edit-rejection") {
     sendStructuredEditFileToolCalls(response, {
       idPrefix: "reject",
       path: "reject-target.js",
@@ -625,13 +1266,13 @@ function sendSseChatResponse(response, body) {
     return;
   }
   if (
-    /Exercise edit approval visual coverage/.test(serializedMessages) &&
-    /Successfully edited `editable-target\.js`/.test(serializedMessages)
+    scenario === "edit-approval" &&
+    /Successfully edited `editable-target\.js`/.test(lastMessageText)
   ) {
     sendTextChatResponse(response, "Edit approval coverage complete.");
     return;
   }
-  if (/Exercise edit approval visual coverage/.test(serializedMessages)) {
+  if (scenario === "edit-approval") {
     sendStructuredEditFileToolCalls(response, {
       idPrefix: "approve",
       path: "editable-target.js",
@@ -641,20 +1282,57 @@ function sendSseChatResponse(response, body) {
     return;
   }
   if (
-    /Exercise structured action summaries/.test(serializedMessages) &&
-    !/PocketAI Extension Test Workspace/.test(serializedMessages)
+    scenario === "structured-read" &&
+    !/PocketAI Extension Test Workspace/.test(lastMessageText)
   ) {
     sendStructuredReadFileToolCall(response);
     return;
   }
   if (
-    /Exercise structured action summaries/.test(serializedMessages) &&
-    /PocketAI Extension Test Workspace/.test(serializedMessages)
+    scenario === "structured-read" &&
+    /PocketAI Extension Test Workspace/.test(lastMessageText)
   ) {
     sendTextChatResponse(response, "Structured action summary complete.");
     return;
   }
   sendTextChatResponse(response, "Fake endpoint saw the selected code.");
+}
+
+function getLastMessageText(messages) {
+  const last = Array.isArray(messages) ? messages.at(-1) : undefined;
+  const content = last?.content;
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => typeof part?.text === "string" ? part.text : "")
+      .filter(Boolean)
+      .join("\n");
+  }
+  return "";
+}
+
+function resolveFakeScenario(serializedMessages) {
+  const scenarios = [
+    ["background-command", "Exercise background command coverage"],
+    ["background-cancel", "Exercise background command cancel coverage"],
+    ["safe-command", "Exercise safe command auto-run coverage"],
+    ["command-approval", "Exercise command approval coverage"],
+    ["command-rejection", "Exercise command rejection coverage"],
+    ["failed-command", "Exercise failed command timeline coverage"],
+    ["multi-edit-approval", "Exercise multi-edit change set approval coverage"],
+    ["multi-edit-rejection", "Exercise multi-edit change set rejection coverage"],
+    ["stale-edit", "Exercise stale edit visual coverage"],
+    ["edit-rejection", "Exercise edit rejection visual coverage"],
+    ["edit-approval", "Exercise edit approval visual coverage"],
+    ["structured-read", "Exercise structured action summaries"],
+  ];
+  return scenarios
+    .map(([name, marker]) => ({
+      name,
+      index: serializedMessages.lastIndexOf(marker),
+    }))
+    .filter((item) => item.index >= 0)
+    .sort((a, b) => b.index - a.index)[0]?.name || "";
 }
 
 function sendTextChatResponse(response, text) {
@@ -814,6 +1492,151 @@ function sendStructuredEditFileToolCalls(
       model: "pocketai-test-model",
       choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
       usage: { prompt_tokens: 17, completion_tokens: 5 },
+    })}\n\n`,
+  );
+  response.write("data: [DONE]\n\n");
+  response.end();
+}
+
+function sendStructuredRunCommandToolCall(response, { id, command, background }) {
+  const args = { command };
+  if (background !== undefined) args.background = background;
+  response.write(
+    `data: ${JSON.stringify({
+      model: "pocketai-test-model",
+      choices: [
+        {
+          index: 0,
+          delta: {
+            tool_calls: [
+              {
+                index: 0,
+                id,
+                type: "function",
+                function: {
+                  name: "run_command",
+                  arguments: "",
+                },
+              },
+            ],
+          },
+          finish_reason: null,
+        },
+      ],
+    })}\n\n`,
+  );
+  response.write(
+    `data: ${JSON.stringify({
+      model: "pocketai-test-model",
+      choices: [
+        {
+          index: 0,
+          delta: {
+            tool_calls: [
+              {
+                index: 0,
+                function: {
+                  arguments: JSON.stringify(args),
+                },
+              },
+            ],
+          },
+          finish_reason: null,
+        },
+      ],
+    })}\n\n`,
+  );
+  response.write(
+    `data: ${JSON.stringify({
+      model: "pocketai-test-model",
+      choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
+      usage: { prompt_tokens: 19, completion_tokens: 5 },
+    })}\n\n`,
+  );
+  response.write("data: [DONE]\n\n");
+  response.end();
+}
+
+function sendStructuredMultiEditFileToolCalls(response, { idPrefix, edits }) {
+  const toolCalls = [];
+  for (const [editIndex] of edits.entries()) {
+    toolCalls.push({
+      index: editIndex,
+      id: `call_read_${idPrefix}_${editIndex}`,
+      type: "function",
+      function: {
+        name: "read_file",
+        arguments: "",
+      },
+    });
+  }
+  for (const [editIndex] of edits.entries()) {
+    toolCalls.push({
+      index: edits.length + editIndex,
+      id: `call_edit_${idPrefix}_${editIndex}`,
+      type: "function",
+      function: {
+        name: "edit_file",
+        arguments: "",
+      },
+    });
+  }
+
+  response.write(
+    `data: ${JSON.stringify({
+      model: "pocketai-test-model",
+      choices: [
+        {
+          index: 0,
+          delta: { tool_calls: toolCalls },
+          finish_reason: null,
+        },
+      ],
+    })}\n\n`,
+  );
+
+  const argumentCalls = [];
+  for (const [editIndex, edit] of edits.entries()) {
+    argumentCalls.push({
+      index: editIndex,
+      function: {
+        arguments: JSON.stringify({
+          path: edit.path,
+          limit: 20,
+        }),
+      },
+    });
+  }
+  for (const [editIndex, edit] of edits.entries()) {
+    argumentCalls.push({
+      index: edits.length + editIndex,
+      function: {
+        arguments: JSON.stringify({
+          path: edit.path,
+          old_string: edit.oldString,
+          new_string: edit.newString,
+        }),
+      },
+    });
+  }
+
+  response.write(
+    `data: ${JSON.stringify({
+      model: "pocketai-test-model",
+      choices: [
+        {
+          index: 0,
+          delta: { tool_calls: argumentCalls },
+          finish_reason: null,
+        },
+      ],
+    })}\n\n`,
+  );
+  response.write(
+    `data: ${JSON.stringify({
+      model: "pocketai-test-model",
+      choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
+      usage: { prompt_tokens: 23, completion_tokens: 8 },
     })}\n\n`,
   );
   response.write("data: [DONE]\n\n");
