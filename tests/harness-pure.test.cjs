@@ -2614,7 +2614,11 @@ test("settings webview uses a script nonce and does not render saved API keys", 
 });
 
 test("chat webview script emits valid JavaScript", () => {
+  const script = getChatScript("brand://icon");
   assert.doesNotThrow(() => {
-    new Function(getChatScript("brand://icon"));
+    new Function(script);
   });
+  assert.match(script, /action === "compact"[\s\S]+prompt: "\/compact"/);
+  assert.match(script, /action === "refresh-models"[\s\S]+type: "refreshModels"/);
+  assert.match(script, /action === "show-jobs"[\s\S]+prompt: "\/jobs"/);
 });

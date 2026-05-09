@@ -49,6 +49,11 @@ async function resetPocketAiConfig() {
     undefined,
     vscode.ConfigurationTarget.Global,
   );
+  await config.update(
+    "contextWindowSize",
+    undefined,
+    vscode.ConfigurationTarget.Global,
+  );
 }
 
 function getConfiguredEndpoints() {
@@ -126,6 +131,7 @@ async function run() {
     await assertPanelSelectionRoundTrip(fakeEndpoint);
     await assertSlashCommandRoundTrip(fakeEndpoint);
     await assertStructuredToolActionRoundTrip();
+    await assertHoverSymbolRoundTrip();
     await assertEditApprovalVisualStateRoundTrip();
     await assertEditRejectionVisualStateRoundTrip();
     await assertStaleEditVisualStateRoundTrip();
@@ -136,6 +142,7 @@ async function run() {
     await assertCommandRejectionRoundTrip();
     await assertFailedCommandTimelineRoundTrip();
     await assertBackgroundCommandTaskRoundTrip();
+    await assertRuntimeHealthStatusActionRoundTrip();
   } finally {
     await resetPocketAiConfig();
     await fakeEndpoint.close();
@@ -261,6 +268,68 @@ async function assertStructuredToolActionRoundTrip() {
     ),
     "Expected the harness Activity timeline to include the executed read_file call.",
   );
+}
+
+async function assertHoverSymbolRoundTrip() {
+  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+  assert(workspaceFolder, "Expected an extension-test workspace folder.");
+  const fileUri = vscode.Uri.joinPath(workspaceFolder.uri, "hover-target.paih");
+  await vscode.workspace.fs.writeFile(
+    fileUri,
+    Buffer.from("hoverTargetSymbol\n", "utf8"),
+  );
+  const hoverProvider = vscode.languages.registerHoverProvider(
+    { scheme: "file", pattern: "**/hover-target.paih" },
+    {
+      provideHover(document, position) {
+        assert.equal(
+          vscode.workspace.asRelativePath(document.uri, false),
+          "hover-target.paih",
+        );
+        assert.equal(position.line, 0);
+        return new vscode.Hover([
+          new vscode.MarkdownString(
+            [
+              "```ts",
+              "const hoverTargetSymbol: string",
+              "```",
+              "PocketAI hover coverage docs.",
+            ].join("\n"),
+          ),
+        ]);
+      },
+    },
+  );
+
+  try {
+    const snapshot = await sendTestPrompt(
+      "Exercise hover symbol IDE coverage by inspecting hover-target.paih.",
+    );
+    assert.match(lastTranscriptContent(snapshot), /Hover symbol coverage complete/);
+    const hoverTool = getLatestToolCall(snapshot, "hover_symbol");
+    assert.equal(hoverTool.status, "executed");
+    assert.equal(hoverTool.filePath, "hover-target.paih");
+    assert.equal(hoverTool.line, 1);
+    assert.equal(hoverTool.character, 0);
+    assert.match(
+      hoverTool.result || "",
+      /Hover info for hover-target\.paih:1:0/,
+    );
+    assert.match(hoverTool.result || "", /hoverTargetSymbol: string/);
+    assert.match(hoverTool.result || "", /PocketAI hover coverage docs/);
+    assert(
+      snapshot.harnessState.toolTimeline.some(
+        (item) =>
+          item.toolCallId === hoverTool.id &&
+          item.status === "succeeded" &&
+          item.toolType === "hover_symbol" &&
+          item.filePath === "hover-target.paih",
+      ),
+      "Expected the Activity timeline to show hover_symbol success.",
+    );
+  } finally {
+    hoverProvider.dispose();
+  }
 }
 
 async function assertEditApprovalVisualStateRoundTrip() {
@@ -879,6 +948,16 @@ async function assertBackgroundCommandTaskRoundTrip() {
       findBackgroundTask(snapshot, BACKGROUND_CANCEL_COMMAND)?.status === "running",
     "cancellable background command to start",
   );
+  assert(
+    cancelReadySnapshot.runtimeHealth.actions.includes("show-jobs"),
+    "Expected running background commands to surface the Jobs status action.",
+  );
+  assert(
+    cancelReadySnapshot.runtimeHealth.issues.some((issue) =>
+      /still running/.test(issue),
+    ),
+    "Expected runtime health to mention running background commands.",
+  );
   const cancelTask = getBackgroundTask(
     cancelReadySnapshot,
     BACKGROUND_CANCEL_COMMAND,
@@ -905,6 +984,28 @@ async function assertBackgroundCommandTaskRoundTrip() {
     /Cleared \d+ finished background commands?\./,
   );
   assert.deepEqual(clearSnapshot.harnessState.backgroundTasks, []);
+}
+
+async function assertRuntimeHealthStatusActionRoundTrip() {
+  await vscode.workspace.getConfiguration("pocketai").update(
+    "contextWindowSize",
+    1,
+    vscode.ConfigurationTarget.Global,
+  );
+  const snapshot = await vscode.commands.executeCommand(
+    "pocketai.test.getSidebarSession",
+  );
+  assert(snapshot, "Expected a session snapshot with runtime health.");
+  assert(
+    snapshot.runtimeHealth.actions.includes("compact"),
+    "Expected a full context to surface the Compact status action.",
+  );
+  assert(
+    snapshot.runtimeHealth.issues.some((issue) =>
+      /context is getting full/i.test(issue),
+    ),
+    "Expected runtime health to mention context pressure.",
+  );
 }
 
 function getPendingEditTool(snapshot, filePath) {
@@ -1100,6 +1201,17 @@ function sendSseChatResponse(response, body) {
   const serializedMessages = JSON.stringify(body.messages);
   const lastMessageText = getLastMessageText(body.messages);
   const scenario = resolveFakeScenario(serializedMessages);
+  if (
+    scenario === "hover-symbol" &&
+    /Hover info for hover-target\.paih:1:0/.test(lastMessageText)
+  ) {
+    sendTextChatResponse(response, "Hover symbol coverage complete.");
+    return;
+  }
+  if (scenario === "hover-symbol") {
+    sendStructuredHoverSymbolToolCall(response);
+    return;
+  }
   if (
     scenario === "background-command" &&
     /Command started in background/.test(lastMessageText)
@@ -1313,6 +1425,7 @@ function getLastMessageText(messages) {
 
 function resolveFakeScenario(serializedMessages) {
   const scenarios = [
+    ["hover-symbol", "Exercise hover symbol IDE coverage"],
     ["background-command", "Exercise background command coverage"],
     ["background-cancel", "Exercise background command cancel coverage"],
     ["safe-command", "Exercise safe command auto-run coverage"],
@@ -1410,6 +1523,67 @@ function sendStructuredReadFileToolCall(response) {
       model: "pocketai-test-model",
       choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
       usage: { prompt_tokens: 13, completion_tokens: 4 },
+    })}\n\n`,
+  );
+  response.write("data: [DONE]\n\n");
+  response.end();
+}
+
+function sendStructuredHoverSymbolToolCall(response) {
+  response.write(
+    `data: ${JSON.stringify({
+      model: "pocketai-test-model",
+      choices: [
+        {
+          index: 0,
+          delta: {
+            tool_calls: [
+              {
+                index: 0,
+                id: "call_hover_symbol",
+                type: "function",
+                function: {
+                  name: "hover_symbol",
+                  arguments: "",
+                },
+              },
+            ],
+          },
+          finish_reason: null,
+        },
+      ],
+    })}\n\n`,
+  );
+  response.write(
+    `data: ${JSON.stringify({
+      model: "pocketai-test-model",
+      choices: [
+        {
+          index: 0,
+          delta: {
+            tool_calls: [
+              {
+                index: 0,
+                function: {
+                  arguments: JSON.stringify({
+                    path: "hover-target.paih",
+                    line: 1,
+                    character: 0,
+                  }),
+                },
+              },
+            ],
+          },
+          finish_reason: null,
+        },
+      ],
+    })}\n\n`,
+  );
+  response.write(
+    `data: ${JSON.stringify({
+      model: "pocketai-test-model",
+      choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }],
+      usage: { prompt_tokens: 15, completion_tokens: 5 },
     })}\n\n`,
   );
   response.write("data: [DONE]\n\n");

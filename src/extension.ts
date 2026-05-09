@@ -869,6 +869,7 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
   getTestSidebarSession() {
     const session = this.sessionMgr.requireSession(this.sessionMgr.sidebarSessionId);
     if (!session) return undefined;
+    const runtimeHealth = this.buildSessionRuntimeHealth(session);
     return {
       id: session.id,
       status: session.status,
@@ -885,11 +886,15 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
           filePath: toolCall.filePath,
           command: toolCall.command,
           background: toolCall.background,
+          line: toolCall.line,
+          character: toolCall.character,
+          query: toolCall.query,
           status: toolCall.status,
           result: toolCall.result,
         })),
       })),
       harnessState: session.harnessState,
+      runtimeHealth,
       endpoints: Array.from(this.endpointMgr.endpointHealthMap.values()),
       models: this.endpointMgr.getEndpointModels(session.selectedEndpoint),
     };
@@ -1864,17 +1869,15 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
       codexState,
     });
 
-    const contextWindowSize =
-      this.config.get<number>("contextWindowSize") ?? DEFAULT_CONTEXT_WINDOW_SIZE;
+    const contextWindowSize = this.getContextWindowSize();
     const contextTokenEstimate = this.estimateTokens(session);
-    const runtimeHealth = buildHarnessRuntimeHealth({
+    const runtimeHealth = this.buildSessionRuntimeHealth(
       session,
-      endpointMgr: this.endpointMgr,
-      endpointUrl: selectedEndpointUrl,
+      selectedEndpointUrl,
       availableModels,
-      estimatedTokens: contextTokenEstimate,
+      contextTokenEstimate,
       contextWindowSize,
-    });
+    );
     const permissions =
       this.config.get<{ allow?: string[]; deny?: string[] }>("permissions") ?? {};
     const permissionSummary =
@@ -1924,6 +1927,27 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
       worktreeRoot: session.worktreeRoot || undefined,
       permissionSummary,
     } satisfies ExtensionToWebviewMessage);
+  }
+
+  private getContextWindowSize() {
+    return this.config.get<number>("contextWindowSize") ?? DEFAULT_CONTEXT_WINDOW_SIZE;
+  }
+
+  private buildSessionRuntimeHealth(
+    session: NonNullable<ReturnType<SessionManager["requireSession"]>>,
+    endpointUrl = this.getSessionEndpointUrl(session),
+    availableModels = this.endpointMgr.getEndpointModels(endpointUrl),
+    estimatedTokens = this.estimateTokens(session),
+    contextWindowSize = this.getContextWindowSize(),
+  ) {
+    return buildHarnessRuntimeHealth({
+      session,
+      endpointMgr: this.endpointMgr,
+      endpointUrl,
+      availableModels,
+      estimatedTokens,
+      contextWindowSize,
+    });
   }
 
   /* ── Chat webview initialization ── */
