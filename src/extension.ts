@@ -64,6 +64,7 @@ import {
 import { getXAIProviderName, XAI_BASE_URL } from "./xai";
 import { fetchPocketAiRemoteEndpoints } from "./pocketai-remote-devices";
 import { getInteractionModeStatus } from "./chat-workflows";
+import { shouldPersistBackgroundTaskUpdate } from "./background-task-workflows";
 import { normalizeSessionEndpointSelections } from "./endpoint-workflows";
 import { getSessionWorkspaceRoot } from "./workspace-roots";
 import {
@@ -401,7 +402,7 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
     const previousTask = session.harnessState.backgroundTasks.find(
       (item) => item.id === task.id,
     );
-    upsertBackgroundTask(session, {
+    const nextTask = {
       id: task.id,
       command: task.command,
       kind: task.kind,
@@ -413,12 +414,9 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
       completedAt: task.completedAt,
       updatedAt: task.updatedAt,
       cwd: task.cwd,
-    });
-    const shouldPersist =
-      !previousTask ||
-      previousTask.status !== task.status ||
-      previousTask.cwd !== task.cwd;
-    if (shouldPersist) {
+    };
+    upsertBackgroundTask(session, nextTask);
+    if (shouldPersistBackgroundTaskUpdate(previousTask, nextTask)) {
       void this.sessionMgr.saveState();
     }
     this.postState();

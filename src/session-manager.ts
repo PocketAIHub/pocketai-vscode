@@ -39,6 +39,7 @@ export class SessionManager {
   sidebarSessionId = "";
   nextSessionNumber = 1;
   lastSelectedModel = "";
+  private saveStateQueue: Promise<void> = Promise.resolve();
 
   constructor(private readonly context: vscode.ExtensionContext) {}
 
@@ -67,7 +68,15 @@ export class SessionManager {
     return normalizedBackgroundTasks;
   }
 
-  async saveState() {
+  saveState(): Promise<void> {
+    const nextSave = this.saveStateQueue
+      .catch(() => undefined)
+      .then(() => this.writeState());
+    this.saveStateQueue = nextSave.catch(() => undefined);
+    return nextSave;
+  }
+
+  private async writeState() {
     const persistedSessions = Array.from(this.sessions.values()).filter((session) =>
       hasSessionStarted(session.transcript),
     );

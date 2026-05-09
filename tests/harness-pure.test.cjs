@@ -112,6 +112,9 @@ const {
   getInteractionModeStatus,
 } = require("../dist/chat-workflows.js");
 const {
+  shouldPersistBackgroundTaskUpdate,
+} = require("../dist/background-task-workflows.js");
+const {
   bindPanelToSession,
   getPanelsBoundToSession,
   rebindDeletedSessionPanels,
@@ -748,6 +751,47 @@ test("harness events and task upserts keep session state tidy", () => {
   );
   assert.equal(session.harnessState.backgroundTasks[0].command, "npm run lint --fix");
   assert.equal(session.harnessState.backgroundTasks[0].status, "failed");
+});
+
+test("background task persistence detects output and completion detail changes", () => {
+  const baseTask = {
+    id: "bg-1",
+    command: "npm test",
+    kind: "background",
+    toolCallId: "tool-1",
+    status: "running",
+    outputPreview: "starting",
+    startedAt: 100,
+    updatedAt: 110,
+    cwd: "/repo",
+  };
+
+  assert.equal(shouldPersistBackgroundTaskUpdate(undefined, baseTask), true);
+  assert.equal(
+    shouldPersistBackgroundTaskUpdate(baseTask, {
+      ...baseTask,
+      outputPreview: "starting\nok",
+      updatedAt: 120,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldPersistBackgroundTaskUpdate(baseTask, {
+      ...baseTask,
+      status: "cancelled",
+      exitCode: 143,
+      completedAt: 130,
+      updatedAt: 130,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldPersistBackgroundTaskUpdate(baseTask, {
+      ...baseTask,
+      updatedAt: 120,
+    }),
+    false,
+  );
 });
 
 test("parseToolCalls understands newer IDE and editor-action tools", () => {
