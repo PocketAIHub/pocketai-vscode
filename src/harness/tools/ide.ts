@@ -1,7 +1,8 @@
 import * as path from "path";
 import * as vscode from "vscode";
-import type { ToolCall } from "../../types";
+import type { ChatSession, ToolCall } from "../../types";
 import { isInsidePath } from "../../helpers";
+import { getSessionWorkspaceRoot } from "../../workspace-roots";
 
 const MAX_DIAGNOSTICS = 100;
 const MAX_LOCATIONS = 25;
@@ -9,14 +10,17 @@ const MAX_SYMBOLS = 200;
 const MAX_HOVER_BLOCKS = 10;
 const MAX_CODE_ACTIONS = 25;
 
-export async function executeDiagnosticsTool(toolCall: ToolCall): Promise<string> {
-  const workspaceFolders = vscode.workspace.workspaceFolders;
-  if (!workspaceFolders?.length) {
+export async function executeDiagnosticsTool(
+  toolCall: ToolCall,
+  session?: Pick<ChatSession, "worktreeRoot">,
+): Promise<string> {
+  const rootPath = getIdeWorkspaceRoot(session);
+  if (!rootPath) {
     return "No workspace folder is open.";
   }
 
   if (toolCall.filePath) {
-    const target = await resolveWorkspaceDocument(toolCall.filePath);
+    const target = await resolveWorkspaceDocument(toolCall.filePath, session);
     if (!target) {
       return `Could not open file: ${toolCall.filePath}`;
     }
@@ -24,7 +28,9 @@ export async function executeDiagnosticsTool(toolCall: ToolCall): Promise<string
     return formatDiagnosticsForFile(target.uri, diagnostics);
   }
 
-  const diagnostics = vscode.languages.getDiagnostics();
+  const diagnostics = vscode.languages
+    .getDiagnostics()
+    .filter(([uri]) => isInsidePath(rootPath, uri.fsPath));
   if (!diagnostics.length) {
     return "No diagnostics are currently reported in the workspace.";
   }
@@ -50,8 +56,11 @@ export async function executeDiagnosticsTool(toolCall: ToolCall): Promise<string
   return `Workspace diagnostics (${total}):\n${lines.join("\n")}${suffix}`;
 }
 
-export async function executeDefinitionTool(toolCall: ToolCall): Promise<string> {
-  const target = await resolveWorkspaceDocument(toolCall.filePath);
+export async function executeDefinitionTool(
+  toolCall: ToolCall,
+  session?: Pick<ChatSession, "worktreeRoot">,
+): Promise<string> {
+  const target = await resolveWorkspaceDocument(toolCall.filePath, session);
   if (!target) {
     return `Could not open file: ${toolCall.filePath}`;
   }
@@ -81,8 +90,11 @@ export async function executeDefinitionTool(toolCall: ToolCall): Promise<string>
   return `Definitions for ${target.relativePath}:${position.line + 1}:${position.character}:\n${lines.join("\n")}${suffix}`;
 }
 
-export async function executeOpenFileTool(toolCall: ToolCall): Promise<string> {
-  const target = await resolveWorkspaceDocument(toolCall.filePath);
+export async function executeOpenFileTool(
+  toolCall: ToolCall,
+  session?: Pick<ChatSession, "worktreeRoot">,
+): Promise<string> {
+  const target = await resolveWorkspaceDocument(toolCall.filePath, session);
   if (!target) {
     return `Could not open file: ${toolCall.filePath}`;
   }
@@ -109,8 +121,11 @@ export async function executeOpenFileTool(toolCall: ToolCall): Promise<string> {
     : `Opened ${target.relativePath} in the editor.`;
 }
 
-export async function executeOpenDefinitionTool(toolCall: ToolCall): Promise<string> {
-  const target = await resolveWorkspaceDocument(toolCall.filePath);
+export async function executeOpenDefinitionTool(
+  toolCall: ToolCall,
+  session?: Pick<ChatSession, "worktreeRoot">,
+): Promise<string> {
+  const target = await resolveWorkspaceDocument(toolCall.filePath, session);
   if (!target) {
     return `Could not open file: ${toolCall.filePath}`;
   }
@@ -175,8 +190,11 @@ export async function executeWorkspaceSymbolsTool(toolCall: ToolCall): Promise<s
   return `Workspace symbols matching "${query}" (${results.length}):\n${lines.join("\n")}${suffix}`;
 }
 
-export async function executeHoverSymbolTool(toolCall: ToolCall): Promise<string> {
-  const target = await resolveWorkspaceDocument(toolCall.filePath);
+export async function executeHoverSymbolTool(
+  toolCall: ToolCall,
+  session?: Pick<ChatSession, "worktreeRoot">,
+): Promise<string> {
+  const target = await resolveWorkspaceDocument(toolCall.filePath, session);
   if (!target) {
     return `Could not open file: ${toolCall.filePath}`;
   }
@@ -213,8 +231,11 @@ export async function executeHoverSymbolTool(toolCall: ToolCall): Promise<string
   return `Hover info for ${target.relativePath}:${position.line + 1}:${position.character}:\n\n${visible.join("\n\n---\n\n")}${suffix}`;
 }
 
-export async function executeCodeActionsTool(toolCall: ToolCall): Promise<string> {
-  const target = await resolveWorkspaceDocument(toolCall.filePath);
+export async function executeCodeActionsTool(
+  toolCall: ToolCall,
+  session?: Pick<ChatSession, "worktreeRoot">,
+): Promise<string> {
+  const target = await resolveWorkspaceDocument(toolCall.filePath, session);
   if (!target) {
     return `Could not open file: ${toolCall.filePath}`;
   }
@@ -246,8 +267,11 @@ export async function executeCodeActionsTool(toolCall: ToolCall): Promise<string
   return `Code actions for ${target.relativePath}:${position.line + 1}:${position.character}:\n${lines.join("\n")}${suffix}`;
 }
 
-export async function executeApplyCodeActionTool(toolCall: ToolCall): Promise<string> {
-  const target = await resolveWorkspaceDocument(toolCall.filePath);
+export async function executeApplyCodeActionTool(
+  toolCall: ToolCall,
+  session?: Pick<ChatSession, "worktreeRoot">,
+): Promise<string> {
+  const target = await resolveWorkspaceDocument(toolCall.filePath, session);
   if (!target) {
     return `Could not open file: ${toolCall.filePath}`;
   }
@@ -308,8 +332,11 @@ export async function executeApplyCodeActionTool(toolCall: ToolCall): Promise<st
   return `Applied code action "${actionTitle}" at ${target.relativePath}:${position.line + 1}:${position.character}${effect ? ` (${effect})` : ""}.`;
 }
 
-export async function executeReferencesTool(toolCall: ToolCall): Promise<string> {
-  const target = await resolveWorkspaceDocument(toolCall.filePath);
+export async function executeReferencesTool(
+  toolCall: ToolCall,
+  session?: Pick<ChatSession, "worktreeRoot">,
+): Promise<string> {
+  const target = await resolveWorkspaceDocument(toolCall.filePath, session);
   if (!target) {
     return `Could not open file: ${toolCall.filePath}`;
   }
@@ -351,8 +378,11 @@ export async function executeReferencesTool(toolCall: ToolCall): Promise<string>
   return `References for ${target.relativePath}:${position.line + 1}:${position.character}:\n${lines.join("\n")}${suffix}`;
 }
 
-export async function executeDocumentSymbolsTool(toolCall: ToolCall): Promise<string> {
-  const target = await resolveWorkspaceDocument(toolCall.filePath);
+export async function executeDocumentSymbolsTool(
+  toolCall: ToolCall,
+  session?: Pick<ChatSession, "worktreeRoot">,
+): Promise<string> {
+  const target = await resolveWorkspaceDocument(toolCall.filePath, session);
   if (!target) {
     return `Could not open file: ${toolCall.filePath}`;
   }
@@ -382,15 +412,17 @@ export async function executeDocumentSymbolsTool(toolCall: ToolCall): Promise<st
   return `Document symbols in ${target.relativePath}:\n${visible.join("\n")}${suffix}`;
 }
 
-async function resolveWorkspaceDocument(filePath: string): Promise<{
+async function resolveWorkspaceDocument(
+  filePath: string,
+  session?: Pick<ChatSession, "worktreeRoot">,
+): Promise<{
   uri: vscode.Uri;
   document: vscode.TextDocument;
   relativePath: string;
 } | undefined> {
-  const workspaceFolders = vscode.workspace.workspaceFolders;
-  if (!workspaceFolders?.length) return undefined;
+  const rootPath = getIdeWorkspaceRoot(session);
+  if (!rootPath) return undefined;
 
-  const rootPath = workspaceFolders[0].uri.fsPath;
   const fullPath = path.resolve(rootPath, filePath);
   if (!isInsidePath(rootPath, fullPath)) return undefined;
 
@@ -400,11 +432,19 @@ async function resolveWorkspaceDocument(filePath: string): Promise<{
     return {
       uri,
       document,
-      relativePath: vscode.workspace.asRelativePath(uri, false),
+      relativePath: path.relative(rootPath, fullPath) || path.basename(fullPath),
     };
   } catch {
     return undefined;
   }
+}
+
+function getIdeWorkspaceRoot(
+  session?: Pick<ChatSession, "worktreeRoot">,
+): string | undefined {
+  return session
+    ? getSessionWorkspaceRoot(session)
+    : vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 }
 
 function createPosition(toolCall: ToolCall): vscode.Position | undefined {

@@ -137,17 +137,17 @@ function createBuiltinToolBehaviors(
   diagnostics: {
     approvalPolicy: "always-auto",
     previewKind: "none",
-    execute: async ({ toolCall }) => executeDiagnosticsTool(toolCall),
+    execute: async ({ session, toolCall }) => executeDiagnosticsTool(toolCall, session),
   },
   open_file: {
     approvalPolicy: "always-auto",
     previewKind: "none",
-    execute: async ({ toolCall }) => executeOpenFileTool(toolCall),
+    execute: async ({ session, toolCall }) => executeOpenFileTool(toolCall, session),
   },
   open_definition: {
     approvalPolicy: "always-auto",
     previewKind: "none",
-    execute: async ({ toolCall }) => executeOpenDefinitionTool(toolCall),
+    execute: async ({ session, toolCall }) => executeOpenDefinitionTool(toolCall, session),
   },
   workspace_symbols: {
     approvalPolicy: "always-auto",
@@ -157,32 +157,32 @@ function createBuiltinToolBehaviors(
   hover_symbol: {
     approvalPolicy: "always-auto",
     previewKind: "none",
-    execute: async ({ toolCall }) => executeHoverSymbolTool(toolCall),
+    execute: async ({ session, toolCall }) => executeHoverSymbolTool(toolCall, session),
   },
   code_actions: {
     approvalPolicy: "always-auto",
     previewKind: "none",
-    execute: async ({ toolCall }) => executeCodeActionsTool(toolCall),
+    execute: async ({ session, toolCall }) => executeCodeActionsTool(toolCall, session),
   },
   apply_code_action: {
     approvalPolicy: "mode-auto",
     previewKind: "none",
-    execute: async ({ toolCall }) => executeApplyCodeActionTool(toolCall),
+    execute: async ({ session, toolCall }) => executeApplyCodeActionTool(toolCall, session),
   },
   go_to_definition: {
     approvalPolicy: "always-auto",
     previewKind: "none",
-    execute: async ({ toolCall }) => executeDefinitionTool(toolCall),
+    execute: async ({ session, toolCall }) => executeDefinitionTool(toolCall, session),
   },
   find_references: {
     approvalPolicy: "always-auto",
     previewKind: "none",
-    execute: async ({ toolCall }) => executeReferencesTool(toolCall),
+    execute: async ({ session, toolCall }) => executeReferencesTool(toolCall, session),
   },
   document_symbols: {
     approvalPolicy: "always-auto",
     previewKind: "none",
-    execute: async ({ toolCall }) => executeDocumentSymbolsTool(toolCall),
+    execute: async ({ session, toolCall }) => executeDocumentSymbolsTool(toolCall, session),
   },
   read_file: {
     approvalPolicy: "always-auto",

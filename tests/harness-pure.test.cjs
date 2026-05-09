@@ -167,6 +167,9 @@ const {
   resolveWorktreeSlashCommand,
 } = require("../dist/worktree-workflows.js");
 const {
+  resolveSessionWorkspaceRoot,
+} = require("../dist/workspace-root-workflows.js");
+const {
   buildEndpointSecretMigration,
   getEndpointApiKeySecretKey,
 } = require("../dist/endpoint-secrets.js");
@@ -1556,6 +1559,28 @@ test("worktree workflow helpers resolve status, enter, and exit actions", () => 
   });
   assert.equal(exit.kind, "exit");
   assert.match(exit.status, /Exited worktree mode/);
+});
+
+test("session workspace root resolution prefers safe active worktrees", () => {
+  assert.equal(
+    resolveSessionWorkspaceRoot(
+      "/tmp/repo",
+      "/tmp/repo/.pocketai/worktrees/feature-a",
+    ),
+    "/tmp/repo/.pocketai/worktrees/feature-a",
+  );
+  assert.equal(
+    resolveSessionWorkspaceRoot("/tmp/repo", "/tmp/outside"),
+    "/tmp/repo",
+  );
+  assert.equal(
+    resolveSessionWorkspaceRoot("/tmp/repo", ""),
+    "/tmp/repo",
+  );
+  assert.equal(
+    resolveSessionWorkspaceRoot(undefined, "/tmp/repo/.pocketai/worktrees/feature-a"),
+    "/tmp/repo/.pocketai/worktrees/feature-a",
+  );
 });
 
 test("session workflow helpers normalize titles and auto-title only default chats", () => {
