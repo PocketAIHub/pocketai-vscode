@@ -78,6 +78,54 @@ export function getChatStyles(): string {
       gap: 4px;
     }
 
+    .usage-indicator {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 76px;
+      max-width: 112px;
+      height: 26px;
+      padding: 0 9px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: transparent;
+      color: var(--fg-muted);
+      cursor: pointer;
+      font-size: 11px;
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .usage-indicator:hover {
+      background: var(--hover-bg);
+      color: var(--fg);
+    }
+
+    .usage-indicator.ok {
+      color: var(--success);
+      border-color: rgba(78,201,176,0.38);
+      background: rgba(78,201,176,0.07);
+    }
+
+    .usage-indicator.warning {
+      color: var(--warning);
+      border-color: rgba(215,186,125,0.42);
+      background: rgba(215,186,125,0.09);
+    }
+
+    .usage-indicator.danger {
+      color: var(--error);
+      border-color: rgba(241,76,76,0.45);
+      background: rgba(241,76,76,0.09);
+    }
+
+    .usage-indicator.unknown {
+      color: var(--fg-muted);
+      background: rgba(128,128,128,0.06);
+    }
+
     .icon-btn {
       width: 30px;
       height: 30px;
@@ -1437,6 +1485,12 @@ export function getChatStyles(): string {
       flex: 0 1 120px;
     }
 
+    .endpoint-menu {
+      min-width: 0;
+      max-width: 136px;
+      flex: 0 1 136px;
+    }
+
     .composer-actions {
       display: flex;
       align-items: center;
@@ -1468,6 +1522,11 @@ export function getChatStyles(): string {
     .model-popout {
       min-width: 240px;
       max-width: 420px;
+    }
+
+    .endpoint-popout {
+      min-width: 260px;
+      max-width: 430px;
     }
 
     .reasoning-popout {
@@ -1517,6 +1576,11 @@ export function getChatStyles(): string {
       word-break: break-word;
     }
 
+    .endpoint-popout .composer-menu-item {
+      white-space: normal;
+      word-break: break-word;
+    }
+
     .composer-menu-item-title {
       font-size: 12px;
       font-weight: 600;
@@ -1562,6 +1626,74 @@ export function getChatStyles(): string {
       font-size: 12px;
       color: var(--fg-muted);
       line-height: 1;
+    }
+
+    .endpoint-trigger {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      min-height: 30px;
+      padding: 0 10px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: transparent;
+      color: var(--fg);
+      cursor: pointer;
+      font-family: var(--font-sans);
+      font-size: 11px;
+      transition: background 0.1s, color 0.1s, border-color 0.1s;
+    }
+
+    .endpoint-trigger:hover {
+      background: var(--hover-bg);
+      color: var(--fg);
+    }
+
+    .endpoint-trigger:disabled {
+      opacity: 0.45;
+      cursor: default;
+    }
+
+    .endpoint-trigger-label {
+      display: block;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 12px;
+      font-weight: 600;
+      flex: 1 1 auto;
+      text-align: left;
+    }
+
+    .endpoint-trigger-caret {
+      font-size: 11px;
+      color: var(--fg-muted);
+      line-height: 1;
+      flex-shrink: 0;
+    }
+
+    .endpoint-menu-title {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+    }
+
+    .endpoint-menu-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      background: var(--fg-muted);
+    }
+
+    .endpoint-menu-dot.healthy {
+      background: var(--success);
+    }
+
+    .endpoint-menu-dot.unhealthy {
+      background: var(--error);
     }
 
     .model-trigger {

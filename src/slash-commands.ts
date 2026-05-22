@@ -2,7 +2,7 @@ import * as vscode from "vscode";
 import * as child_process from "child_process";
 import * as fs from "fs";
 import * as path from "path";
-import type { ChatSession, InteractionMode } from "./types";
+import type { BridgeUsageResponse, ChatSession, InteractionMode } from "./types";
 import type { SessionManager } from "./session-manager";
 import type { EndpointManager } from "./endpoint-manager";
 import type { MemoryManager } from "./memory-manager";
@@ -32,6 +32,7 @@ import {
   applyTokensSlashCommand,
   buildRefreshSlashStatus,
   buildSlashHelpContent,
+  buildUsageSlashReport,
   resolveEndpointSlashCommand,
   resolveJobsSlashCommand,
 } from "./slash-command-workflows";
@@ -50,6 +51,33 @@ export interface SlashCommandDeps {
   postState: () => void;
   updateStatusBar: () => void;
   openForkedPanel: (forked: ReturnType<SessionManager["forkSession"]>) => void;
+}
+
+async function fetchBridgeUsage(
+  session: ChatSession,
+  deps: SlashCommandDeps,
+): Promise<{ usage?: BridgeUsageResponse; fetchError?: string }> {
+  const endpointUrl = deps.endpointMgr.getResolvedEndpointUrl(
+    session.selectedEndpoint,
+  );
+  const endpoint = deps.endpointMgr.getEndpointConfig(endpointUrl);
+  const apiKey = endpoint.apiKey?.trim() || "local-pocketai";
+
+  try {
+    const response = await fetch(`${endpointUrl}/usage`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!response.ok) {
+      return { fetchError: `HTTP ${response.status}` };
+    }
+    return { usage: (await response.json()) as BridgeUsageResponse };
+  } catch (error) {
+    return {
+      fetchError:
+        error instanceof Error ? error.message : "Unknown bridge usage error",
+    };
+  }
 }
 
 /**
@@ -335,6 +363,41 @@ export async function handleSlashCommand(
 
     case "/tokens": {
       applyTokensSlashCommand(session);
+      deps.postState();
+      return true;
+    }
+
+    case "/usage":
+    case "/limits": {
+      const endpointUrl = deps.endpointMgr.getResolvedEndpointUrl(
+        session.selectedEndpoint,
+      );
+      const endpoint = deps.endpointMgr.getEndpointConfig(endpointUrl);
+      const capabilities = deps.endpointMgr.getEndpointCapabilities(endpointUrl);
+      const shouldFetch =
+        capabilities.kind === "codex-bridge" ||
+        capabilities.kind === "claude-bridge" ||
+        capabilities.kind === "cursor-bridge" ||
+        capabilities.kind === "opencode-bridge";
+      const { usage, fetchError } = shouldFetch
+        ? await fetchBridgeUsage(session, deps)
+        : {};
+
+      session.transcript.push({
+        role: "tool",
+        content: buildUsageSlashReport({
+          endpointName: endpoint.name || "PocketAI endpoint",
+          endpointUrl,
+          providerLabel: capabilities.label,
+          providerKind: capabilities.kind,
+          session,
+          usage,
+          fetchError,
+        }),
+      });
+      session.status = "Usage report ready.";
+      deps.sessionMgr.touchSession(session);
+      await deps.sessionMgr.saveState();
       deps.postState();
       return true;
     }

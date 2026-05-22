@@ -35,10 +35,15 @@ export function getChatScript(brandIconUri: string): string {
     const inputWrap = document.getElementById("inputWrap");
     const resourceWarningsEl = document.getElementById("resourceWarnings");
     const endpointSelect = document.getElementById("endpointSelect");
+    const endpointTrigger = document.getElementById("endpointTrigger");
+    const endpointTriggerLabel = document.getElementById("endpointTriggerLabel");
+    const endpointMenuWrap = document.getElementById("endpointMenuWrap");
+    const endpointMenu = document.getElementById("endpointMenu");
     const modelSelect = document.getElementById("modelSelect");
     const reasoningSelect = document.getElementById("reasoningSelect");
     const activeSkillsEl = document.getElementById("activeSkills");
     const exportBtn = document.getElementById("exportBtn");
+    const usageIndicator = document.getElementById("usageIndicator");
     const sessionSearch = document.getElementById("sessionSearch");
     const sessionSearchWrap = document.getElementById("sessionSearchWrap");
     const tokenUsageEl = document.getElementById("tokenUsage");
@@ -256,6 +261,10 @@ export function getChatScript(brandIconUri: string): string {
       if (modelMenu) modelMenu.classList.remove("open");
     }
 
+    function closeEndpointMenu() {
+      if (endpointMenu) endpointMenu.classList.remove("open");
+    }
+
     function closeReasoningMenu() {
       if (reasoningMenu) reasoningMenu.classList.remove("open");
     }
@@ -267,6 +276,7 @@ export function getChatScript(brandIconUri: string): string {
     function closeComposerMenus() {
       closeModeMenu();
       closeModelMenu();
+      closeEndpointMenu();
       closeReasoningMenu();
       closeAttachMenu();
     }
@@ -3089,6 +3099,12 @@ export function getChatScript(brandIconUri: string): string {
       if (attachUploadAction) attachUploadAction.disabled = !!payload.busy;
       if (attachmentInput) attachmentInput.disabled = !!payload.busy;
       if (modeTrigger) modeTrigger.disabled = !!payload.busy;
+      if (endpointTrigger) {
+        endpointTrigger.disabled =
+          !!payload.busy ||
+          !Array.isArray(payload.endpoints) ||
+          payload.endpoints.length === 0;
+      }
       if (modelTrigger) {
         modelTrigger.disabled =
           !!payload.busy ||
@@ -3127,6 +3143,7 @@ export function getChatScript(brandIconUri: string): string {
         if (ep.url === payload.selectedEndpoint) opt.selected = true;
         endpointSelect.appendChild(opt);
       }
+      renderEndpointMenu(payload);
       renderModelSelect(payload);
       renderReasoningSelect(payload);
       renderActiveSkills(payload);
@@ -3155,11 +3172,146 @@ export function getChatScript(brandIconUri: string): string {
       renderApprovalDock(payload);
       renderSessions(payload);
       renderResourceWarnings(payload);
+      renderBridgeUsageIndicator(payload);
     }
 
     function formatTokens(n) {
       if (n < 1000) return n + "";
       return (n / 1000).toFixed(1) + "k";
+    }
+
+    function getBridgeUsageSummary(payload) {
+      const kind = payload.providerKind || "";
+      const isBridge =
+        kind === "codex-bridge" ||
+        kind === "claude-bridge" ||
+        kind === "cursor-bridge" ||
+        kind === "opencode-bridge";
+      if (!isBridge) return null;
+
+      const providerName =
+        kind === "codex-bridge"
+          ? "Codex"
+          : kind === "claude-bridge"
+            ? "Claude"
+            : kind === "cursor-bridge"
+              ? "Cursor"
+              : "OpenCode";
+      const usageState = payload.bridgeUsage || {};
+      const usage = usageState.usage || {};
+      const limits = Array.isArray(usage.limits) ? usage.limits : [];
+      let highestLimit = null;
+      for (const limit of limits) {
+        if (typeof limit.usedPercent !== "number") continue;
+        if (!highestLimit || limit.usedPercent > highestLimit.usedPercent) {
+          highestLimit = limit;
+        }
+      }
+
+      if (usageState.fetchError) {
+        return {
+          label: providerName + " usage ?",
+          detail: "Could not read usage: " + usageState.fetchError,
+          level: "unknown",
+        };
+      }
+
+      if (highestLimit) {
+        const pct = Math.round(highestLimit.usedPercent);
+        const level = pct >= 90 ? "danger" : pct >= 70 ? "warning" : "ok";
+        const reset = highestLimit.resetsAt ? " Resets " + formatUsageDate(highestLimit.resetsAt) + "." : "";
+        return {
+          label: providerName + " " + pct + "%",
+          detail: (highestLimit.label || "Account limit") + ": " + pct + "% used." + reset,
+          level,
+        };
+      }
+
+      if (usage.message) {
+        return {
+          label: providerName + " usage",
+          detail: usage.message,
+          level: "unknown",
+        };
+      }
+
+      return {
+        label: providerName + " usage",
+        detail: "Usage has not been checked yet.",
+        level: "unknown",
+      };
+    }
+
+    function formatUsageDate(value) {
+      if (!value) return "";
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return value;
+      return date.toLocaleString();
+    }
+
+    function renderBridgeUsageIndicator(payload) {
+      if (!usageIndicator) return;
+      const summary = getBridgeUsageSummary(payload);
+      if (!summary) {
+        usageIndicator.style.display = "none";
+        return;
+      }
+
+      usageIndicator.style.display = "inline-flex";
+      usageIndicator.textContent = summary.label;
+      usageIndicator.title = summary.detail + " Click for details.";
+      usageIndicator.className = "usage-indicator " + summary.level;
+    }
+
+    function renderEndpointMenu(payload) {
+      const endpoints = Array.isArray(payload.endpoints) ? payload.endpoints : [];
+      const selectedEndpoint = payload.selectedEndpoint || "";
+      const selected = endpoints.find((ep) => ep.url === selectedEndpoint) || endpoints[0];
+      const selectedName = selected ? (selected.name || selected.url || "Endpoint") : "Endpoint";
+
+      if (endpointTriggerLabel) {
+        endpointTriggerLabel.textContent = selectedName;
+      }
+      if (endpointTrigger) {
+        endpointTrigger.title = "CLI / endpoint: " + selectedName;
+      }
+      if (!endpointMenu) return;
+
+      endpointMenu.innerHTML = "";
+      if (!endpoints.length) {
+        const emptyItem = document.createElement("button");
+        emptyItem.className = "composer-menu-item";
+        emptyItem.type = "button";
+        emptyItem.disabled = true;
+        emptyItem.textContent = "No endpoints available";
+        endpointMenu.appendChild(emptyItem);
+        return;
+      }
+
+      for (const ep of endpoints) {
+        const item = document.createElement("button");
+        item.className =
+          "composer-menu-item endpoint-menu-item" +
+          (ep.url === selectedEndpoint ? " active" : "");
+        item.type = "button";
+        item.setAttribute("data-endpoint-url", ep.url);
+
+        const title = document.createElement("span");
+        title.className = "composer-menu-item-title endpoint-menu-title";
+        const dot = document.createElement("span");
+        dot.className = "endpoint-menu-dot " + (ep.healthy ? "healthy" : "unhealthy");
+        title.appendChild(dot);
+        title.appendChild(document.createTextNode(ep.name || ep.url));
+
+        const subtitle = document.createElement("span");
+        subtitle.className = "composer-menu-item-subtitle";
+        const latency = ep.latencyMs ? " · " + ep.latencyMs + "ms" : "";
+        subtitle.textContent = (ep.url || "") + latency;
+
+        item.appendChild(title);
+        item.appendChild(subtitle);
+        endpointMenu.appendChild(item);
+      }
     }
 
     function renderModelSelect(payload) {
@@ -3650,6 +3802,7 @@ export function getChatScript(brandIconUri: string): string {
       e.stopPropagation();
       if (state && state.busy) return;
       closeModeMenu();
+      closeEndpointMenu();
       closeModelMenu();
       closeReasoningMenu();
       attachMenu.classList.toggle("open");
@@ -3749,6 +3902,7 @@ export function getChatScript(brandIconUri: string): string {
       e.stopPropagation();
       if (state && state.busy) return;
       closeAttachMenu();
+      closeEndpointMenu();
       closeModelMenu();
       closeReasoningMenu();
       modeMenu.classList.toggle("open");
@@ -3767,6 +3921,7 @@ export function getChatScript(brandIconUri: string): string {
       e.stopPropagation();
       if (state && state.busy) return;
       closeAttachMenu();
+      closeEndpointMenu();
       closeModeMenu();
       closeReasoningMenu();
       modelMenu.classList.toggle("open");
@@ -3786,6 +3941,7 @@ export function getChatScript(brandIconUri: string): string {
       e.stopPropagation();
       if (state && state.busy) return;
       closeAttachMenu();
+      closeEndpointMenu();
       closeModeMenu();
       closeModelMenu();
       reasoningMenu.classList.toggle("open");
@@ -3802,6 +3958,28 @@ export function getChatScript(brandIconUri: string): string {
         reasoningEffort: reasoningEffort,
       });
     });
+
+    if (endpointTrigger && endpointMenu) {
+      endpointTrigger.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (state && state.busy) return;
+        closeAttachMenu();
+        closeModeMenu();
+        closeModelMenu();
+        closeReasoningMenu();
+        endpointMenu.classList.toggle("open");
+      });
+
+      endpointMenu.addEventListener("click", (e) => {
+        const btn = e.target.closest("[data-endpoint-url]");
+        if (!btn) return;
+        const endpointUrl = btn.getAttribute("data-endpoint-url");
+        if (!endpointUrl) return;
+        closeEndpointMenu();
+        vscode.postMessage({ type: "selectEndpoint", endpointUrl: endpointUrl });
+      });
+    }
 
     sessionTrigger.addEventListener("click", () => {
       sessionMenu.classList.toggle("open");
@@ -3849,6 +4027,9 @@ export function getChatScript(brandIconUri: string): string {
       if (modeMenuWrap && !modeMenuWrap.contains(e.target)) {
         closeModeMenu();
       }
+      if (endpointMenuWrap && !endpointMenuWrap.contains(e.target)) {
+        closeEndpointMenu();
+      }
       if (modelMenuWrap && !modelMenuWrap.contains(e.target)) {
         closeModelMenu();
       }
@@ -3863,6 +4044,12 @@ export function getChatScript(brandIconUri: string): string {
     endpointSelect.addEventListener("change", () => {
       vscode.postMessage({ type: "selectEndpoint", endpointUrl: endpointSelect.value });
     });
+
+    if (usageIndicator) {
+      usageIndicator.addEventListener("click", () => {
+        vscode.postMessage({ type: "sendPrompt", prompt: "/usage" });
+      });
+    }
 
     modelSelect.addEventListener("change", () => {
       if (!modelSelect.value) return;

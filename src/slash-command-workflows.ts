@@ -14,6 +14,8 @@ import {
   type JobsCommandAction,
 } from "./slash-command-utils";
 import type {
+  BridgeUsageResponse,
+  BridgeUsageTokenBucket,
   ChatEntry,
   ChatSession,
   EndpointHealth,
@@ -35,6 +37,7 @@ export function buildSlashHelpContent(skillLines: string[]): string {
     "- `/refresh` — refresh models for the active endpoint",
     "- `/status` or `/doctor` — show harness and endpoint health",
     "- `/compact` — compact the current chat context",
+    "- `/usage` or `/limits` — show provider account usage for bridge endpoints",
     "- `/tokens` — show token usage for this chat",
     "- `/sessions` — list saved chat sessions",
     "- `/fork` — fork the current chat into a new one",
@@ -165,6 +168,135 @@ export function applyTokensSlashCommand(session: ChatSession) {
   session.status = total > 0
     ? `Session tokens — Prompt: ${session.cumulativeTokens.prompt.toLocaleString()}, Completion: ${session.cumulativeTokens.completion.toLocaleString()}, Total: ${total.toLocaleString()}`
     : "No tokens used yet in this session.";
+}
+
+function formatInteger(value: number | undefined): string {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.round(value).toLocaleString()
+    : "0";
+}
+
+function formatDateTime(value: string | undefined): string {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString();
+}
+
+function formatPercent(value: number | undefined): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "usage unknown";
+  const rounded = Number.isInteger(value) ? value.toString() : value.toFixed(1);
+  return `${rounded}% used`;
+}
+
+function formatTokenBucket(label: string, bucket: BridgeUsageTokenBucket): string {
+  const total =
+    bucket.totalTokens ??
+    (bucket.promptTokens ?? 0) + (bucket.completionTokens ?? 0);
+  const parts = [
+    `prompt ${formatInteger(bucket.promptTokens)}`,
+    `completion ${formatInteger(bucket.completionTokens)}`,
+  ];
+  if (bucket.cachedPromptTokens) {
+    parts.push(`cached ${formatInteger(bucket.cachedPromptTokens)}`);
+  }
+  if (bucket.reasoningTokens) {
+    parts.push(`reasoning ${formatInteger(bucket.reasoningTokens)}`);
+  }
+  return `- ${label}: ${formatInteger(total)} tokens (${parts.join(", ")})`;
+}
+
+function formatSessionTokenLine(session: ChatSession): string {
+  const total = session.cumulativeTokens.prompt + session.cumulativeTokens.completion;
+  return `- PocketAI chat: ${formatInteger(total)} tokens (prompt ${formatInteger(session.cumulativeTokens.prompt)}, completion ${formatInteger(session.cumulativeTokens.completion)})`;
+}
+
+export function buildUsageSlashReport(options: {
+  endpointName: string;
+  endpointUrl: string;
+  providerLabel: string;
+  providerKind: string;
+  session: ChatSession;
+  usage?: BridgeUsageResponse;
+  fetchError?: string;
+}): string {
+  const lines = [
+    `Provider usage — ${options.endpointName || options.providerLabel}`,
+    "",
+    `Endpoint: \`${options.endpointUrl}\``,
+    `Provider: ${options.providerLabel}`,
+  ];
+
+  if (
+    options.providerKind !== "codex-bridge" &&
+    options.providerKind !== "claude-bridge" &&
+    options.providerKind !== "cursor-bridge" &&
+    options.providerKind !== "opencode-bridge"
+  ) {
+    lines.push(
+      "",
+      "This endpoint does not advertise PocketAI bridge account-usage data.",
+      "",
+      "Session tokens:",
+      formatSessionTokenLine(options.session),
+    );
+    return lines.join("\n");
+  }
+
+  if (options.fetchError) {
+    lines.push(
+      "",
+      `Could not read bridge usage: ${options.fetchError}`,
+      "",
+      "Session tokens:",
+      formatSessionTokenLine(options.session),
+    );
+    return lines.join("\n");
+  }
+
+  const usage = options.usage;
+  if (!usage || usage.ok === false) {
+    lines.push("", usage?.message || "Bridge usage is not available yet.");
+  } else {
+    if (usage.planType) {
+      lines.push("", `Plan: ${usage.planType}`);
+    }
+
+    if (usage.limits?.length) {
+      lines.push("", "Account limits:");
+      for (const limit of usage.limits) {
+        const reset = formatDateTime(limit.resetsAt);
+        lines.push(
+          `- ${limit.label || limit.id || "Limit"}: ${formatPercent(limit.usedPercent)}${reset ? `, resets ${reset}` : ""}`,
+        );
+      }
+    } else if (usage.message) {
+      lines.push("", usage.message);
+    } else {
+      lines.push("", "No account limit windows were reported by this bridge.");
+    }
+
+    const tokenUsage = usage.tokenUsage;
+    if (tokenUsage?.total || tokenUsage?.last) {
+      lines.push("", "Bridge tokens:");
+      if (tokenUsage.total) {
+        lines.push(formatTokenBucket("Total", tokenUsage.total));
+      }
+      if (tokenUsage.last) {
+        lines.push(formatTokenBucket("Last response", tokenUsage.last));
+      }
+      if (tokenUsage.contextWindow) {
+        lines.push(`- Context window: ${formatInteger(tokenUsage.contextWindow)} tokens`);
+      }
+    }
+
+    if (usage.updatedAt) {
+      lines.push("", `Updated: ${formatDateTime(usage.updatedAt)}`);
+    }
+  }
+
+  lines.push("", "Session tokens:", formatSessionTokenLine(options.session));
+  return lines.join("\n");
 }
 
 export function buildRefreshSlashStatus(

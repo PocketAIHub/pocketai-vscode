@@ -158,6 +158,7 @@ const {
   applyTokensSlashCommand,
   buildRefreshSlashStatus,
   buildSlashHelpContent,
+  buildUsageSlashReport,
   resolveEndpointSlashCommand,
   resolveJobsSlashCommand,
 } = require("../dist/slash-command-workflows.js");
@@ -1180,6 +1181,14 @@ test("provider capabilities and chat controls honor provider kind and codex reas
     "claude-bridge",
   );
   assert.equal(
+    getEndpointProviderKind("http://127.0.0.1:39461"),
+    "cursor-bridge",
+  );
+  assert.equal(
+    getEndpointProviderKind("http://127.0.0.1:39462"),
+    "opencode-bridge",
+  );
+  assert.equal(
     getEndpointProviderKind("https://example.com/v1"),
     "openai-compatible",
   );
@@ -1206,6 +1215,30 @@ test("provider capabilities and chat controls honor provider kind and codex reas
       kind: "claude-bridge",
       label: "Claude Bridge",
       description: "Claude bridge endpoint with PocketAI-compatible tools",
+      supportsStructuredTools: true,
+      supportsReasoningEffort: false,
+      requiresBridgeBootstrap: true,
+      usesReportedUsageForContext: false,
+    },
+  );
+  assert.deepEqual(
+    getEndpointCapabilities("http://127.0.0.1:39461"),
+    {
+      kind: "cursor-bridge",
+      label: "Cursor Bridge",
+      description: "Cursor bridge endpoint with Composer model controls",
+      supportsStructuredTools: true,
+      supportsReasoningEffort: false,
+      requiresBridgeBootstrap: true,
+      usesReportedUsageForContext: false,
+    },
+  );
+  assert.deepEqual(
+    getEndpointCapabilities("http://127.0.0.1:39462"),
+    {
+      kind: "opencode-bridge",
+      label: "OpenCode Bridge",
+      description: "OpenCode bridge endpoint with provider/model controls",
       supportsStructuredTools: true,
       supportsReasoningEffort: false,
       requiresBridgeBootstrap: true,
@@ -2188,6 +2221,20 @@ test("prompt workflow helper only injects local clock verification for narrow lo
     ) || "",
     /Bridge Tool Discipline/,
   );
+  assert.match(
+    buildTransientSystemPromptForPrompt(
+      "look in this repo and tell me where the loading spinner words are",
+      "cursor-bridge",
+    ) || "",
+    /Bridge Tool Discipline/,
+  );
+  assert.match(
+    buildTransientSystemPromptForPrompt(
+      "look in this repo and tell me where the loading spinner words are",
+      "opencode-bridge",
+    ) || "",
+    /Bridge Tool Discipline/,
+  );
   assert.equal(
     buildTransientSystemPromptForPrompt(
       "look in this repo and tell me where the loading spinner words are",
@@ -2318,6 +2365,106 @@ test("slash command workflow helpers handle common command flows and effects", (
 
   applyTokensSlashCommand(session);
   assert.match(session.status, /Session tokens/);
+  const codexUsageReport = buildUsageSlashReport({
+    endpointName: "Codex Bridge",
+    endpointUrl: "http://127.0.0.1:39458",
+    providerLabel: "Codex Bridge",
+    providerKind: "codex-bridge",
+    session,
+    usage: {
+      ok: true,
+      provider: "codex",
+      source: "local-codex-log",
+      planType: "prolite",
+      limits: [
+        {
+          id: "primary",
+          label: "5-hour window",
+          usedPercent: 22,
+          resetsAt: "2026-05-18T09:37:26.000Z",
+        },
+      ],
+      tokenUsage: {
+        total: {
+          promptTokens: 763900,
+          cachedPromptTokens: 629888,
+          completionTokens: 7705,
+          reasoningTokens: 4769,
+          totalTokens: 771605,
+        },
+      },
+    },
+  });
+  assert.match(codexUsageReport, /Account limits:/);
+  assert.match(codexUsageReport, /5-hour window: 22% used/);
+  assert.match(codexUsageReport, /Bridge tokens:/);
+  assert.match(codexUsageReport, /PocketAI chat:/);
+
+  const claudeUsageReport = buildUsageSlashReport({
+    endpointName: "Claude Bridge",
+    endpointUrl: "http://127.0.0.1:39460",
+    providerLabel: "Claude Bridge",
+    providerKind: "claude-bridge",
+    session,
+    usage: {
+      ok: true,
+      provider: "claude",
+      accountUsageAvailable: false,
+      message: "Claude Code does not expose plan-limit percentages through non-interactive bridge calls.",
+      tokenUsage: {
+        total: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+      },
+    },
+  });
+  assert.match(claudeUsageReport, /does not expose plan-limit percentages/);
+  assert.match(claudeUsageReport, /Total: 15 tokens/);
+
+  const cursorUsageReport = buildUsageSlashReport({
+    endpointName: "Cursor Bridge",
+    endpointUrl: "http://127.0.0.1:39461",
+    providerLabel: "Cursor Bridge",
+    providerKind: "cursor-bridge",
+    session,
+    usage: {
+      ok: true,
+      provider: "cursor",
+      accountUsageAvailable: false,
+      message: "Cursor CLI does not expose plan-limit percentages through JSON bridge calls.",
+      tokenUsage: {
+        total: { promptTokens: 20, completionTokens: 7, totalTokens: 27 },
+      },
+    },
+  });
+  assert.match(cursorUsageReport, /does not expose plan-limit percentages/);
+  assert.match(cursorUsageReport, /Total: 27 tokens/);
+
+  const opencodeUsageReport = buildUsageSlashReport({
+    endpointName: "OpenCode Bridge",
+    endpointUrl: "http://127.0.0.1:39462",
+    providerLabel: "OpenCode Bridge",
+    providerKind: "opencode-bridge",
+    session,
+    usage: {
+      ok: true,
+      provider: "opencode",
+      accountUsageAvailable: false,
+      message: "OpenCode CLI does not expose plan-limit percentages through JSON bridge calls.",
+      tokenUsage: {
+        total: { promptTokens: 30, completionTokens: 9, totalTokens: 39 },
+      },
+    },
+  });
+  assert.match(opencodeUsageReport, /does not expose plan-limit percentages/);
+  assert.match(opencodeUsageReport, /Total: 39 tokens/);
+
+  const localUsageReport = buildUsageSlashReport({
+    endpointName: "Local PocketAI",
+    endpointUrl: "http://127.0.0.1:39457",
+    providerLabel: "Local LLM",
+    providerKind: "local-pocketai",
+    session,
+  });
+  assert.match(localUsageReport, /does not advertise PocketAI bridge account-usage data/);
   assert.equal(buildRefreshSlashStatus("Codex Bridge", 0), "Refreshed Codex Bridge, but no models were found.");
   assert.equal(buildRefreshSlashStatus("Codex Bridge", 2), "Refreshed models for Codex Bridge.");
 

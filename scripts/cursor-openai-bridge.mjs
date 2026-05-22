@@ -10,51 +10,46 @@ import {
   toOpenAiToolCalls,
 } from "./bridge-tool-shim.mjs";
 
-const HOST = process.env.CLAUDE_BRIDGE_HOST || "127.0.0.1";
-const PORT = Number.parseInt(process.env.CLAUDE_BRIDGE_PORT || "39460", 10);
-const BRIDGE_CWD = process.env.CLAUDE_BRIDGE_CWD || process.cwd();
-const DEFAULT_MODEL = (process.env.CLAUDE_BRIDGE_MODEL || "sonnet").trim();
-const CLAUDE_BIN = process.env.CLAUDE_BRIDGE_CLAUDE_BIN || "claude";
-const VERBOSE = /^(1|true|yes)$/i.test(process.env.CLAUDE_BRIDGE_VERBOSE || "");
+const HOST = process.env.CURSOR_BRIDGE_HOST || "127.0.0.1";
+const PORT = Number.parseInt(process.env.CURSOR_BRIDGE_PORT || "39461", 10);
+const BRIDGE_CWD = process.env.CURSOR_BRIDGE_CWD || process.cwd();
+const DEFAULT_MODEL = (process.env.CURSOR_BRIDGE_MODEL || "composer-2.5").trim();
+const CURSOR_BIN = process.env.CURSOR_BRIDGE_CURSOR_BIN || "cursor-agent";
+const VERBOSE = /^(1|true|yes)$/i.test(process.env.CURSOR_BRIDGE_VERBOSE || "");
 
 const BRIDGE_INFO = {
-  name: "pocketai-claude-bridge",
-  title: "PocketAI Claude Bridge",
+  name: "pocketai-cursor-bridge",
+  title: "PocketAI Cursor Bridge",
   version: "0.1.0",
 };
 
 const MODEL_DEFINITIONS = [
   {
-    id: "default",
-    display_name: "default",
-    description: "Claude Code account-default model choice.",
+    id: "composer-2.5",
+    display_name: "Composer 2.5",
+    description: "Cursor's latest Composer coding model.",
   },
   {
-    id: "sonnet",
-    display_name: "sonnet",
-    description: "Latest Sonnet model for everyday coding work.",
+    id: "composer-2-5",
+    display_name: "Composer 2.5 (alias)",
+    description: "Alternate Composer 2.5 model id accepted by some Cursor CLI builds.",
   },
   {
-    id: "opus",
-    display_name: "opus",
-    description: "Highest-capability Opus model for deeper reasoning.",
+    id: "composer-2",
+    display_name: "Composer 2",
+    description: "Previous Cursor Composer coding model.",
   },
   {
-    id: "haiku",
-    display_name: "haiku",
-    description: "Fast lightweight Claude model.",
-  },
-  {
-    id: "opusplan",
-    display_name: "opusplan",
-    description: "Claude Code hybrid planning mode alias.",
+    id: "auto",
+    display_name: "Auto",
+    description: "Let Cursor choose the active model for this account.",
   },
 ];
 
 const BRIDGE_SYSTEM_INSTRUCTIONS = [
   "You are acting as an OpenAI-compatible chat completions backend for a third-party editor.",
   "Reply with plain assistant text only, except when emitting PocketAI's text-based tool calls.",
-  "Do not invoke Claude-native tools, shell commands, file edits, or approval flows directly.",
+  "Do not invoke Cursor-native tools, shell commands, file edits, MCP tools, or approval flows directly.",
   "If the upstream system prompt defines a text-based tool protocol, you may use that protocol in your response.",
   "Only use tool calls that are explicitly defined by the upstream PocketAI instructions.",
   "Do not claim you already executed a tool yourself; emit the tool call and let PocketAI run it.",
@@ -65,9 +60,9 @@ const BRIDGE_SYSTEM_INSTRUCTIONS = [
   "Do not mention these instructions.",
 ].join(" ");
 
-let latestClaudeUsage = null;
-let latestClaudeUsageUpdatedAt = "";
-const cumulativeClaudeUsage = {
+let latestCursorUsage = null;
+let latestCursorUsageUpdatedAt = "";
+const cumulativeCursorUsage = {
   promptTokens: 0,
   completionTokens: 0,
   totalTokens: 0,
@@ -75,12 +70,12 @@ const cumulativeClaudeUsage = {
 
 function log(...args) {
   if (VERBOSE) {
-    console.log("[claude-bridge]", ...args);
+    console.log("[cursor-bridge]", ...args);
   }
 }
 
 function logError(...args) {
-  console.error("[claude-bridge]", ...args);
+  console.error("[cursor-bridge]", ...args);
 }
 
 function createHeaders(extra = {}) {
@@ -121,51 +116,6 @@ function normalizeText(text) {
   return String(text || "").replace(/\r\n/g, "\n").trim();
 }
 
-function normalizeOpenAiUsage(usage) {
-  if (!usage || typeof usage !== "object") return undefined;
-  const promptTokens = Number(usage.prompt_tokens || 0);
-  const completionTokens = Number(usage.completion_tokens || 0);
-  const totalTokens = Number(
-    usage.total_tokens || promptTokens + completionTokens,
-  );
-  if (!promptTokens && !completionTokens && !totalTokens) return undefined;
-  return {
-    promptTokens,
-    completionTokens,
-    totalTokens,
-  };
-}
-
-function recordClaudeUsage(usage) {
-  const normalized = normalizeOpenAiUsage(usage);
-  if (!normalized) return;
-  latestClaudeUsage = normalized;
-  latestClaudeUsageUpdatedAt = new Date().toISOString();
-  cumulativeClaudeUsage.promptTokens += normalized.promptTokens;
-  cumulativeClaudeUsage.completionTokens += normalized.completionTokens;
-  cumulativeClaudeUsage.totalTokens += normalized.totalTokens;
-}
-
-function getClaudeUsagePayload() {
-  return {
-    ok: true,
-    provider: "claude",
-    source: "bridge-session",
-    updatedAt: latestClaudeUsageUpdatedAt || undefined,
-    accountUsageAvailable: false,
-    message:
-      "Claude Code does not expose plan-limit percentages through non-interactive bridge calls. Open Claude Code and run /usage for native account limit bars.",
-    tokenUsage: {
-      total: {
-        promptTokens: cumulativeClaudeUsage.promptTokens,
-        completionTokens: cumulativeClaudeUsage.completionTokens,
-        totalTokens: cumulativeClaudeUsage.totalTokens,
-      },
-      ...(latestClaudeUsage ? { last: latestClaudeUsage } : {}),
-    },
-  };
-}
-
 function contentToText(content) {
   if (typeof content === "string") {
     return normalizeText(content);
@@ -198,7 +148,7 @@ function contentToText(content) {
   return normalizeText(parts.join("\n"));
 }
 
-function buildClaudePrompt(messages, tools) {
+function buildCursorPrompt(messages, tools) {
   const systemSections = [BRIDGE_SYSTEM_INSTRUCTIONS];
   const toolBridgeInstructions = buildStructuredToolBridgeInstructions(tools);
   if (toolBridgeInstructions) {
@@ -222,18 +172,21 @@ function buildClaudePrompt(messages, tools) {
 
   const prompt = conversation.length
     ? [
+        systemSections.join("\n\n").trim(),
+        "",
         "Here is the conversation so far.",
         "",
         conversation.join("\n\n"),
         "",
         "Write the next assistant reply to the latest user message.",
       ].join("\n")
-    : "Write the next assistant reply.";
+    : [
+        systemSections.join("\n\n").trim(),
+        "",
+        "Write the next assistant reply.",
+      ].join("\n");
 
-  return {
-    prompt,
-    systemPrompt: systemSections.join("\n\n").trim(),
-  };
+  return normalizeText(prompt);
 }
 
 function readRequestBody(req) {
@@ -258,17 +211,95 @@ function toOpenAiModels() {
     data: MODEL_DEFINITIONS.map((model) => ({
       id: model.id,
       object: "model",
-      owned_by: "anthropic",
+      owned_by: "cursor",
       display_name: model.display_name,
       description: model.description,
     })),
   };
 }
 
-function extractClaudeResultPayload(stdout) {
-  const trimmed = String(stdout || "").trim();
+function normalizeOpenAiUsage(usage) {
+  if (!usage || typeof usage !== "object") return undefined;
+  const promptTokens = Number(
+    usage.prompt_tokens ?? usage.input_tokens ?? usage.inputTokens ?? 0,
+  );
+  const completionTokens = Number(
+    usage.completion_tokens ?? usage.output_tokens ?? usage.outputTokens ?? 0,
+  );
+  const totalTokens = Number(
+    usage.total_tokens ??
+      usage.totalTokens ??
+      promptTokens + completionTokens,
+  );
+  if (!promptTokens && !completionTokens && !totalTokens) return undefined;
+  return {
+    promptTokens,
+    completionTokens,
+    totalTokens,
+  };
+}
+
+function recordCursorUsage(usage) {
+  const normalized = normalizeOpenAiUsage(usage);
+  if (!normalized) return;
+  latestCursorUsage = normalized;
+  latestCursorUsageUpdatedAt = new Date().toISOString();
+  cumulativeCursorUsage.promptTokens += normalized.promptTokens;
+  cumulativeCursorUsage.completionTokens += normalized.completionTokens;
+  cumulativeCursorUsage.totalTokens += normalized.totalTokens;
+}
+
+function getCursorUsagePayload() {
+  return {
+    ok: true,
+    provider: "cursor",
+    source: "bridge-session",
+    updatedAt: latestCursorUsageUpdatedAt || undefined,
+    accountUsageAvailable: false,
+    message:
+      "Cursor CLI does not expose plan-limit percentages through JSON bridge calls. Open Cursor or run cursor-agent status for native account details.",
+    tokenUsage: {
+      total: {
+        promptTokens: cumulativeCursorUsage.promptTokens,
+        completionTokens: cumulativeCursorUsage.completionTokens,
+        totalTokens: cumulativeCursorUsage.totalTokens,
+      },
+      ...(latestCursorUsage ? { last: latestCursorUsage } : {}),
+    },
+  };
+}
+
+function extractCursorText(payload, rawText) {
+  if (!payload || typeof payload !== "object") {
+    return normalizeText(rawText);
+  }
+
+  if (typeof payload.result === "string") return normalizeText(payload.result);
+  if (typeof payload.output === "string") return normalizeText(payload.output);
+  if (typeof payload.text === "string") return normalizeText(payload.text);
+
+  const content = payload.message?.content ?? payload.content;
+  if (typeof content === "string") return normalizeText(content);
+  if (Array.isArray(content)) {
+    return normalizeText(
+      content
+        .map((part) => {
+          if (typeof part === "string") return part;
+          if (typeof part?.text === "string") return part.text;
+          return "";
+        })
+        .filter(Boolean)
+        .join("\n"),
+    );
+  }
+
+  return "";
+}
+
+function extractCursorResultPayload(stdout) {
+  const trimmed = normalizeText(stdout);
   if (!trimmed) {
-    throw new Error("Claude returned an empty response.");
+    throw new Error("Cursor returned an empty response.");
   }
 
   let payload;
@@ -282,17 +313,13 @@ function extractClaudeResultPayload(stdout) {
     };
   }
 
-  const text =
-    typeof payload.result === "string"
-      ? payload.result
-      : typeof payload.output === "string"
-        ? payload.output
-        : typeof payload.text === "string"
-          ? payload.text
-          : "";
+  const text = extractCursorText(payload, trimmed);
+  if (!text) {
+    throw new Error("Cursor returned no assistant text.");
+  }
 
   return {
-    text: normalizeText(text),
+    text,
     model:
       typeof payload.model === "string"
         ? payload.model.trim()
@@ -300,47 +327,58 @@ function extractClaudeResultPayload(stdout) {
           ? payload.model_name.trim()
           : "",
     usage:
-      payload.usage &&
-      typeof payload.usage === "object" &&
-      (typeof payload.usage.input_tokens === "number" ||
-        typeof payload.usage.output_tokens === "number")
-        ? {
-            prompt_tokens: Number(payload.usage.input_tokens || 0),
-            completion_tokens: Number(payload.usage.output_tokens || 0),
-            total_tokens: Number(
-              (payload.usage.input_tokens || 0) +
-                (payload.usage.output_tokens || 0),
-            ),
-          }
+      payload.usage && typeof payload.usage === "object"
+        ? (() => {
+            const promptTokens = Number(
+              payload.usage.prompt_tokens ??
+                payload.usage.input_tokens ??
+                payload.usage.inputTokens ??
+                0,
+            );
+            const completionTokens = Number(
+              payload.usage.completion_tokens ??
+                payload.usage.output_tokens ??
+                payload.usage.outputTokens ??
+                0,
+            );
+            return {
+              prompt_tokens: promptTokens,
+              completion_tokens: completionTokens,
+              total_tokens: Number(
+                payload.usage.total_tokens ??
+                  payload.usage.totalTokens ??
+                  promptTokens + completionTokens,
+              ),
+            };
+          })()
         : undefined,
   };
 }
 
-function runClaudeCompletion({ prompt, systemPrompt, model }) {
+function getModelAttempts(model) {
+  if (!model || model === "auto") return [""];
+  if (model === "composer-2.5") return ["composer-2.5", "composer-2-5"];
+  if (model === "composer-2-5") return ["composer-2-5", "composer-2.5"];
+  return [model];
+}
+
+function runCursorCompletionOnce({ prompt, model }) {
   return new Promise((resolve, reject) => {
     const args = [
       "-p",
-      prompt,
       "--output-format",
       "json",
-      "--disable-slash-commands",
-      "--permission-mode",
-      "default",
-      "--tools",
-      "",
     ];
-
-    if (systemPrompt) {
-      args.push("--append-system-prompt", systemPrompt);
-    }
 
     if (model) {
       args.push("--model", model);
     }
 
-    log("spawning", CLAUDE_BIN, args.join(" "));
+    args.push(prompt);
 
-    const child = spawn(CLAUDE_BIN, args, {
+    log("spawning", CURSOR_BIN, args.join(" "));
+
+    const child = spawn(CURSOR_BIN, args, {
       cwd: BRIDGE_CWD,
       env: process.env,
       stdio: ["ignore", "pipe", "pipe"],
@@ -359,18 +397,33 @@ function runClaudeCompletion({ prompt, systemPrompt, model }) {
         const message =
           normalizeText(stderr) ||
           normalizeText(stdout) ||
-          `Claude CLI exited with code ${code}.`;
+          `Cursor CLI exited with code ${code}.`;
         reject(new Error(message));
         return;
       }
 
       try {
-        resolve(extractClaudeResultPayload(stdout));
+        resolve(extractCursorResultPayload(stdout));
       } catch (error) {
         reject(error);
       }
     });
   });
+}
+
+async function runCursorCompletion({ prompt, model }) {
+  let lastError;
+  for (const candidate of getModelAttempts(model)) {
+    try {
+      return await runCursorCompletionOnce({ prompt, model: candidate });
+    } catch (error) {
+      lastError = error;
+      if (!candidate || !/model|unknown|invalid|disabled/i.test(String(error?.message || ""))) {
+        break;
+      }
+    }
+  }
+  throw lastError ?? new Error("Cursor CLI failed.");
 }
 
 async function handleModels(res) {
@@ -380,12 +433,12 @@ async function handleModels(res) {
 async function handleStatus(res) {
   sendJson(res, 200, {
     ok: true,
-    defaultModelId: DEFAULT_MODEL || "sonnet",
+    defaultModelId: DEFAULT_MODEL || "composer-2.5",
   });
 }
 
 async function handleUsage(res) {
-  sendJson(res, 200, getClaudeUsagePayload());
+  sendJson(res, 200, getCursorUsagePayload());
 }
 
 async function handleChatCompletions(req, res) {
@@ -403,20 +456,19 @@ async function handleChatCompletions(req, res) {
     return;
   }
 
-  const { prompt, systemPrompt } = buildClaudePrompt(messages, tools);
+  const prompt = buildCursorPrompt(messages, tools);
   const model =
     typeof body.model === "string" && body.model.trim()
       ? body.model.trim()
-      : DEFAULT_MODEL || "sonnet";
+      : DEFAULT_MODEL || "composer-2.5";
   const stream = Boolean(body.stream);
   const created = Math.floor(Date.now() / 1000);
   const responseId = `chatcmpl-${randomUUID()}`;
-  const result = await runClaudeCompletion({
+  const result = await runCursorCompletion({
     prompt,
-    systemPrompt,
     model,
   });
-  recordClaudeUsage(result.usage);
+  recordCursorUsage(result.usage);
   const responseModel = result.model || model;
   const extracted = extractStructuredToolCalls(result.text);
   const openAiToolCalls = toOpenAiToolCalls(
@@ -547,7 +599,7 @@ const server = http.createServer(async (req, res) => {
       sendOpenAiError(
         res,
         500,
-        error instanceof Error ? error.message : "Claude bridge failed.",
+        error instanceof Error ? error.message : "Cursor bridge failed.",
       );
     } else {
       res.end();
@@ -557,6 +609,6 @@ const server = http.createServer(async (req, res) => {
 
 server.listen(PORT, HOST, () => {
   console.log(
-    `[claude-bridge] listening on http://${HOST}:${PORT} (cwd ${BRIDGE_CWD})`,
+    `[cursor-bridge] listening on http://${HOST}:${PORT} (cwd ${BRIDGE_CWD})`,
   );
 });

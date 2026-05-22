@@ -41,6 +41,7 @@ export function getChatHtml(nonce: string, cspSource: string, brandIconUri: stri
         </div>
       </div>
       <div class="header-actions">
+        <button class="usage-indicator" id="usageIndicator" type="button" title="Show provider usage" style="display:none">Usage</button>
         <select class="endpoint-select" id="endpointSelect" title="Switch endpoint"></select>
         <button class="icon-btn" id="exportBtn" type="button" title="Export as Markdown">⤓</button>
       </div>
@@ -96,6 +97,13 @@ export function getChatHtml(nonce: string, cspSource: string, brandIconUri: stri
                     <span class="composer-menu-item-subtitle">Attach images or text-like files</span>
                   </button>
                 </div>
+              </div>
+              <div class="composer-menu endpoint-menu" id="endpointMenuWrap">
+                <button class="endpoint-trigger" id="endpointTrigger" type="button" title="Choose CLI or endpoint">
+                  <span class="endpoint-trigger-label" id="endpointTriggerLabel">Endpoint</span>
+                  <span class="endpoint-trigger-caret">▾</span>
+                </button>
+                <div class="composer-popout endpoint-popout" id="endpointMenu"></div>
               </div>
               <div class="composer-menu" id="modeMenuWrap">
                 <button class="mode-trigger" id="modeTrigger" type="button" title="Change mode">

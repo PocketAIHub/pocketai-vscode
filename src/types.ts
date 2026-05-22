@@ -372,6 +372,44 @@ export type StatusResponse = {
   defaultModelId?: string;
 };
 
+export type BridgeUsageTokenBucket = {
+  promptTokens?: number;
+  cachedPromptTokens?: number;
+  completionTokens?: number;
+  reasoningTokens?: number;
+  totalTokens?: number;
+};
+
+export type BridgeUsageResponse = {
+  ok?: boolean;
+  provider?: string;
+  source?: string;
+  updatedAt?: string;
+  message?: string;
+  accountUsageAvailable?: boolean;
+  planType?: string;
+  limits?: Array<{
+    id?: string;
+    label?: string;
+    usedPercent?: number;
+    windowMinutes?: number;
+    resetsAt?: string;
+    resetsAtUnix?: number;
+  }>;
+  tokenUsage?: {
+    total?: BridgeUsageTokenBucket;
+    last?: BridgeUsageTokenBucket;
+    contextWindow?: number;
+  };
+  error?: { message?: string };
+};
+
+export type BridgeUsageState = {
+  usage?: BridgeUsageResponse;
+  fetchError?: string;
+  fetchedAt?: number;
+};
+
 export type OllamaTagsResponse = {
   models?: Array<{ name?: string; model?: string }>;
 };
@@ -463,6 +501,7 @@ export type ExtensionToWebviewMessage = {
   runtimeHealth: HarnessRuntimeHealth;
   worktreeRoot?: string;
   permissionSummary?: { allowCount: number; denyCount: number };
+  bridgeUsage?: BridgeUsageState;
 } | {
   type: "streamStart";
   label?: string;

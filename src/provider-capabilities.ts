@@ -3,13 +3,17 @@ import { isOpenCodeGoEndpoint } from "./opencode-go";
 import {
   CLAUDE_BRIDGE_URL,
   CODEX_BRIDGE_URL,
+  CURSOR_BRIDGE_URL,
   LOCAL_POCKETAI_URL,
+  OPENCODE_BRIDGE_URL,
 } from "./provider-constants";
 
 export type EndpointProviderKind =
   | "local-pocketai"
   | "codex-bridge"
   | "claude-bridge"
+  | "cursor-bridge"
+  | "opencode-bridge"
   | "openai-compatible";
 
 export type EndpointCapabilities = {
@@ -29,6 +33,12 @@ export function getEndpointProviderKind(url: string): EndpointProviderKind {
   }
   if (normalizedUrl === normalizeBaseUrl(CLAUDE_BRIDGE_URL)) {
     return "claude-bridge";
+  }
+  if (normalizedUrl === normalizeBaseUrl(CURSOR_BRIDGE_URL)) {
+    return "cursor-bridge";
+  }
+  if (normalizedUrl === normalizeBaseUrl(OPENCODE_BRIDGE_URL)) {
+    return "opencode-bridge";
   }
   if (normalizedUrl === normalizeBaseUrl(LOCAL_POCKETAI_URL)) {
     return "local-pocketai";
@@ -52,13 +62,18 @@ export function getEndpointCapabilities(
       structuredToolsEnabled,
     supportsReasoningEffort: kind === "codex-bridge",
     requiresBridgeBootstrap:
-      kind === "codex-bridge" || kind === "claude-bridge",
+      kind === "codex-bridge" ||
+      kind === "claude-bridge" ||
+      kind === "cursor-bridge" ||
+      kind === "opencode-bridge",
     // OpenCode Go reports usage in a way that can look much larger than the
     // user-visible transcript for tiny chats, so use our local estimate for
     // context pressure instead of trusting the provider totals.
     usesReportedUsageForContext:
       kind !== "codex-bridge" &&
       kind !== "claude-bridge" &&
+      kind !== "cursor-bridge" &&
+      kind !== "opencode-bridge" &&
       !isOpenCodeGoEndpoint(url),
   };
 }
@@ -82,6 +97,16 @@ export function getEndpointProviderProfile(kind: EndpointProviderKind): {
       return {
         label: "Claude Bridge",
         description: "Claude bridge endpoint with PocketAI-compatible tools",
+      };
+    case "cursor-bridge":
+      return {
+        label: "Cursor Bridge",
+        description: "Cursor bridge endpoint with Composer model controls",
+      };
+    case "opencode-bridge":
+      return {
+        label: "OpenCode Bridge",
+        description: "OpenCode bridge endpoint with provider/model controls",
       };
     case "openai-compatible":
     default:

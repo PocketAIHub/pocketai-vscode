@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 
 import http from "node:http";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import process from "node:process";
@@ -47,6 +50,7 @@ let modelCache = {
   expiresAt: 0,
   payload: null,
 };
+let latestCodexUsage = null;
 
 function log(...args) {
   console.log("[codex-bridge]", ...args);
@@ -181,13 +185,315 @@ function buildCodexPrompt(messages, tools) {
 }
 
 function mapUsage(tokenUsage) {
-  const last = tokenUsage?.last;
+  const last = firstDefined(
+    tokenUsage?.last,
+    tokenUsage?.lastTokenUsage,
+    tokenUsage?.last_token_usage,
+  );
   if (!last) return undefined;
   return {
-    prompt_tokens: Number(last.inputTokens || 0),
-    completion_tokens: Number(last.outputTokens || 0),
-    total_tokens: Number(last.totalTokens || 0),
+    prompt_tokens: Number(firstDefined(last.inputTokens, last.input_tokens) || 0),
+    completion_tokens: Number(firstDefined(last.outputTokens, last.output_tokens) || 0),
+    total_tokens: Number(firstDefined(last.totalTokens, last.total_tokens) || 0),
   };
+}
+
+function firstDefined(...values) {
+  return values.find((value) => value !== undefined && value !== null);
+}
+
+function toNumber(value) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
+}
+
+function normalizeTokenBucket(bucket) {
+  if (!bucket || typeof bucket !== "object") return undefined;
+  const promptTokens = toNumber(firstDefined(bucket.inputTokens, bucket.input_tokens)) || 0;
+  const cachedPromptTokens =
+    toNumber(firstDefined(bucket.cachedInputTokens, bucket.cached_input_tokens)) || 0;
+  const completionTokens = toNumber(firstDefined(bucket.outputTokens, bucket.output_tokens)) || 0;
+  const reasoningTokens =
+    toNumber(firstDefined(bucket.reasoningOutputTokens, bucket.reasoning_output_tokens)) || 0;
+  const totalTokens =
+    toNumber(firstDefined(bucket.totalTokens, bucket.total_tokens)) ||
+    promptTokens + completionTokens;
+
+  return {
+    promptTokens,
+    cachedPromptTokens,
+    completionTokens,
+    reasoningTokens,
+    totalTokens,
+  };
+}
+
+function normalizeTokenUsage(tokenUsage, info) {
+  const total = normalizeTokenBucket(
+    firstDefined(
+      tokenUsage?.total,
+      tokenUsage?.totalTokenUsage,
+      tokenUsage?.total_token_usage,
+      info?.total_token_usage,
+    ),
+  );
+  const last = normalizeTokenBucket(
+    firstDefined(
+      tokenUsage?.last,
+      tokenUsage?.lastTokenUsage,
+      tokenUsage?.last_token_usage,
+      info?.last_token_usage,
+    ),
+  );
+  const contextWindow =
+    toNumber(
+      firstDefined(
+        tokenUsage?.modelContextWindow,
+        tokenUsage?.model_context_window,
+        info?.model_context_window,
+      ),
+    ) || undefined;
+
+  if (!total && !last && !contextWindow) return undefined;
+  return {
+    ...(total ? { total } : {}),
+    ...(last ? { last } : {}),
+    ...(contextWindow ? { contextWindow } : {}),
+  };
+}
+
+function toResetIso(value) {
+  if (value === undefined || value === null || value === "") return undefined;
+  const numeric = toNumber(value);
+  const date =
+    numeric !== undefined
+      ? new Date(numeric > 10_000_000_000 ? numeric : numeric * 1000)
+      : new Date(String(value));
+  if (Number.isNaN(date.getTime())) return undefined;
+  return date.toISOString();
+}
+
+function getLimitLabel(id, windowMinutes) {
+  if (windowMinutes === 300) return "5-hour window";
+  if (windowMinutes === 10080) return "7-day window";
+  if (windowMinutes && windowMinutes % 1440 === 0) {
+    return `${windowMinutes / 1440}-day window`;
+  }
+  if (windowMinutes && windowMinutes % 60 === 0) {
+    return `${windowMinutes / 60}-hour window`;
+  }
+  return id;
+}
+
+function normalizeRateLimit(limit, id) {
+  if (!limit || typeof limit !== "object") return undefined;
+  const usedPercent = toNumber(
+    firstDefined(limit.usedPercent, limit.used_percent, limit.used_percentage),
+  );
+  const windowMinutes = toNumber(firstDefined(limit.windowMinutes, limit.window_minutes));
+  const resetsAtUnix = toNumber(firstDefined(limit.resetsAtUnix, limit.resets_at));
+  const resetsAt = toResetIso(firstDefined(limit.resetsAt, limit.resets_at));
+
+  if (usedPercent === undefined && windowMinutes === undefined && !resetsAt) {
+    return undefined;
+  }
+
+  return {
+    id,
+    label: limit.label || limit.name || getLimitLabel(id, windowMinutes),
+    ...(usedPercent !== undefined ? { usedPercent } : {}),
+    ...(windowMinutes !== undefined ? { windowMinutes } : {}),
+    ...(resetsAt ? { resetsAt } : {}),
+    ...(resetsAtUnix !== undefined ? { resetsAtUnix } : {}),
+  };
+}
+
+function normalizeRateLimits(rawRateLimits) {
+  if (!rawRateLimits || typeof rawRateLimits !== "object") return [];
+  const limits = [];
+
+  for (const id of ["primary", "secondary", "five_hour", "seven_day"]) {
+    const normalized = normalizeRateLimit(rawRateLimits[id], id);
+    if (normalized) limits.push(normalized);
+  }
+
+  if (Array.isArray(rawRateLimits)) {
+    for (const [index, limit] of rawRateLimits.entries()) {
+      const normalized = normalizeRateLimit(limit, limit?.id || `limit_${index + 1}`);
+      if (normalized) limits.push(normalized);
+    }
+  }
+
+  return limits;
+}
+
+function buildCodexUsageSnapshot({ source, tokenUsage, info, rateLimits, updatedAt }) {
+  const normalizedTokenUsage = normalizeTokenUsage(tokenUsage, info);
+  const normalizedLimits = normalizeRateLimits(rateLimits);
+  const planType =
+    typeof rateLimits?.plan_type === "string"
+      ? rateLimits.plan_type
+      : typeof rateLimits?.planType === "string"
+        ? rateLimits.planType
+        : undefined;
+
+  if (!normalizedTokenUsage && !normalizedLimits.length && !planType) {
+    return undefined;
+  }
+
+  return {
+    ok: true,
+    provider: "codex",
+    source,
+    updatedAt: updatedAt || new Date().toISOString(),
+    ...(normalizedTokenUsage ? { tokenUsage: normalizedTokenUsage } : {}),
+    ...(normalizedLimits.length ? { limits: normalizedLimits } : {}),
+    ...(planType ? { planType } : {}),
+  };
+}
+
+function mergeCodexUsageSnapshots(preferred, fallback) {
+  if (!preferred) return fallback;
+  if (!fallback) return preferred;
+  return {
+    ...fallback,
+    ...preferred,
+    tokenUsage: preferred.tokenUsage || fallback.tokenUsage,
+    limits: preferred.limits?.length ? preferred.limits : fallback.limits,
+    planType: preferred.planType || fallback.planType,
+  };
+}
+
+function readFileTail(filePath, maxBytes = 512_000) {
+  const stat = fs.statSync(filePath);
+  const start = Math.max(0, stat.size - maxBytes);
+  const length = stat.size - start;
+  const buffer = Buffer.alloc(length);
+  const fd = fs.openSync(filePath, "r");
+  try {
+    fs.readSync(fd, buffer, 0, length, start);
+  } finally {
+    fs.closeSync(fd);
+  }
+  return buffer.toString("utf8");
+}
+
+function collectJsonlFiles(rootDir, maxFiles = 80) {
+  if (!fs.existsSync(rootDir)) return [];
+  const files = [];
+  const visit = (dir) => {
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const filePath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        visit(filePath);
+      } else if (entry.isFile() && entry.name.endsWith(".jsonl")) {
+        try {
+          files.push({ filePath, mtimeMs: fs.statSync(filePath).mtimeMs });
+        } catch {}
+      }
+    }
+  };
+
+  visit(rootDir);
+  return files
+    .sort((left, right) => right.mtimeMs - left.mtimeMs)
+    .slice(0, maxFiles)
+    .map((entry) => entry.filePath);
+}
+
+function extractCodexUsageFromLine(line) {
+  let parsed;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    return undefined;
+  }
+
+  const payload = parsed?.payload || parsed;
+  if (!payload || typeof payload !== "object") return undefined;
+
+  if (payload.type === "token_count" || payload.rate_limits || payload.rateLimits) {
+    return buildCodexUsageSnapshot({
+      source: "local-codex-log",
+      info: payload.info,
+      rateLimits: payload.rate_limits || payload.rateLimits,
+      updatedAt: parsed.timestamp,
+    });
+  }
+
+  return undefined;
+}
+
+function readLatestCodexUsageFromLogs() {
+  const codexDir = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
+  const files = [
+    ...collectJsonlFiles(path.join(codexDir, "sessions")),
+    ...collectJsonlFiles(path.join(codexDir, "archived_sessions"), 20),
+  ].sort((left, right) => {
+    try {
+      return fs.statSync(right).mtimeMs - fs.statSync(left).mtimeMs;
+    } catch {
+      return 0;
+    }
+  });
+
+  for (const filePath of files) {
+    let text;
+    try {
+      text = readFileTail(filePath);
+    } catch {
+      continue;
+    }
+    const lines = text.split(/\r?\n/).filter(Boolean);
+    for (let index = lines.length - 1; index >= 0; index--) {
+      const snapshot = extractCodexUsageFromLine(lines[index]);
+      if (snapshot) return snapshot;
+    }
+  }
+
+  return undefined;
+}
+
+function updateLatestCodexUsageFromNotification(params) {
+  const rateLimits = firstDefined(
+    params.rateLimits,
+    params.rate_limits,
+    params.tokenUsage?.rateLimits,
+    params.tokenUsage?.rate_limits,
+  );
+  const snapshot = buildCodexUsageSnapshot({
+    source: "live-bridge",
+    tokenUsage: params.tokenUsage,
+    rateLimits,
+  });
+  if (snapshot) {
+    latestCodexUsage = mergeCodexUsageSnapshots(snapshot, latestCodexUsage);
+  }
+}
+
+function getCodexUsagePayload() {
+  const logSnapshot = readLatestCodexUsageFromLogs();
+  const snapshot = mergeCodexUsageSnapshots(latestCodexUsage, logSnapshot);
+  if (!snapshot) {
+    return {
+      ok: false,
+      provider: "codex",
+      source: "unavailable",
+      message:
+        "Codex usage is not available yet. Send one message through the Codex bridge, or open Codex once so it writes a local usage snapshot.",
+    };
+  }
+  return snapshot;
 }
 
 function readRequestBody(req) {
@@ -466,6 +772,10 @@ async function handleStatus(res) {
   });
 }
 
+async function handleUsage(res) {
+  sendJson(res, 200, getCodexUsagePayload());
+}
+
 async function handleChatCompletions(req, res) {
   const body = await readRequestBody(req);
   const messages = Array.isArray(body.messages) ? body.messages : [];
@@ -574,6 +884,7 @@ async function handleChatCompletions(req, res) {
           params.turnId === turnId
         ) {
           usage = mapUsage(params.tokenUsage);
+          updateLatestCodexUsageFromNotification(params);
           return;
         }
 
@@ -733,7 +1044,7 @@ const server = http.createServer(async (req, res) => {
         ok: true,
         name: BRIDGE_INFO.name,
         version: BRIDGE_INFO.version,
-        endpoints: ["/v1/models", "/v1/chat/completions", "/status"],
+        endpoints: ["/v1/models", "/v1/chat/completions", "/status", "/usage"],
         cwd: BRIDGE_CWD,
       });
       return;
@@ -741,6 +1052,11 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "GET" && url.pathname === "/status") {
       await handleStatus(res);
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/usage") {
+      await handleUsage(res);
       return;
     }
 

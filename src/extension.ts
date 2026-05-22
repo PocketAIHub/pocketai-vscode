@@ -4,6 +4,8 @@ import * as fs from "fs";
 import * as path from "path";
 
 import type {
+  BridgeUsageResponse,
+  BridgeUsageState,
   ExtensionToWebviewMessage,
 } from "./types";
 
@@ -47,6 +49,8 @@ import { handleSlashCommand, type SlashCommandDeps } from "./slash-commands";
 import { setupChatMessageHandler, type MessageHandlerDeps } from "./message-handler";
 import { CodexBridgeManager } from "./codex-bridge-manager";
 import { ClaudeBridgeManager } from "./claude-bridge-manager";
+import { CursorBridgeManager } from "./cursor-bridge-manager";
+import { OpenCodeBridgeManager } from "./opencode-bridge-manager";
 import {
   buildCodexReasoningControlsState,
   buildProviderChatControlsState,
@@ -54,7 +58,9 @@ import {
 import {
   CLAUDE_BRIDGE_URL,
   CODEX_BRIDGE_URL,
+  CURSOR_BRIDGE_URL,
   LOCAL_POCKETAI_URL,
+  OPENCODE_BRIDGE_URL,
 } from "./provider-constants";
 import {
   getOpenCodeGoProviderName,
@@ -245,6 +251,10 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
   private readonly terminalMgr: TerminalManager;
   private readonly codexBridgeMgr: CodexBridgeManager;
   private readonly claudeBridgeMgr: ClaudeBridgeManager;
+  private readonly cursorBridgeMgr: CursorBridgeManager;
+  private readonly opencodeBridgeMgr: OpenCodeBridgeManager;
+  private readonly bridgeUsageByEndpoint = new Map<string, BridgeUsageState>();
+  private bridgeUsageTimer?: ReturnType<typeof setInterval>;
   private memoryMgr?: MemoryManager;
 
   constructor(private readonly context: vscode.ExtensionContext) {
@@ -256,6 +266,8 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
     this.terminalMgr = new TerminalManager(this.outputChannel);
     this.codexBridgeMgr = new CodexBridgeManager(context, this.outputChannel);
     this.claudeBridgeMgr = new ClaudeBridgeManager(context, this.outputChannel);
+    this.cursorBridgeMgr = new CursorBridgeManager(context, this.outputChannel);
+    this.opencodeBridgeMgr = new OpenCodeBridgeManager(context, this.outputChannel);
     context.subscriptions.push(
       subscribeToCommandTasks((task) => this.handleBackgroundTaskUpdate(task)),
     );
@@ -360,11 +372,54 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
         }
       },
     );
+    this.cursorBridgeMgr.startPolling(
+      this.endpointMgr,
+      () => this.pushSettingsState(),
+      async (state) => {
+        const cursorIsActive =
+          this.endpointMgr.getActiveEndpointCapabilities().kind ===
+          "cursor-bridge";
+        if (
+          state.loggedIn &&
+          state.bridgeRunning &&
+          cursorIsActive &&
+          (!state.endpointHealthy ||
+            this.endpointMgr.getEndpointModels(CURSOR_BRIDGE_URL).length === 0)
+        ) {
+          await this.refreshModels(CURSOR_BRIDGE_URL);
+        }
+      },
+    );
+    this.opencodeBridgeMgr.startPolling(
+      this.endpointMgr,
+      () => this.pushSettingsState(),
+      async (state) => {
+        const opencodeIsActive =
+          this.endpointMgr.getActiveEndpointCapabilities().kind ===
+          "opencode-bridge";
+        if (
+          state.loggedIn &&
+          state.bridgeRunning &&
+          opencodeIsActive &&
+          (!state.endpointHealthy ||
+            this.endpointMgr.getEndpointModels(OPENCODE_BRIDGE_URL).length === 0)
+        ) {
+          await this.refreshModels(OPENCODE_BRIDGE_URL);
+        }
+      },
+    );
     void this.autoConnectConfiguredCodexBridge();
     void this.autoConnectConfiguredClaudeBridge();
+    void this.autoConnectConfiguredCursorBridge();
+    void this.autoConnectConfiguredOpenCodeBridge();
+    this.startBridgeUsagePolling();
   }
 
   dispose() {
+    if (this.bridgeUsageTimer) {
+      clearInterval(this.bridgeUsageTimer);
+      this.bridgeUsageTimer = undefined;
+    }
     this.endpointMgr.dispose();
     this.projectInstructionsWatcher?.dispose();
     for (const d of this.projectInstructionsWatcherDisposables) d.dispose();
@@ -373,6 +428,8 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
     this.terminalMgr.dispose();
     this.codexBridgeMgr.dispose();
     this.claudeBridgeMgr.dispose();
+    this.cursorBridgeMgr.dispose();
+    this.opencodeBridgeMgr.dispose();
   }
 
   /* ── Helpers ── */
@@ -556,7 +613,9 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
     return this.endpointMgr.getEndpointCapabilities(url);
   }
 
-  private hasBridgeEndpoint(kind: "codex-bridge" | "claude-bridge"): boolean {
+  private hasBridgeEndpoint(
+    kind: "codex-bridge" | "claude-bridge" | "cursor-bridge" | "opencode-bridge",
+  ): boolean {
     return this.endpointMgr
       .getEndpoints()
       .some(
@@ -611,6 +670,52 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
     this.updateStatusBar();
   }
 
+  private async autoConnectConfiguredCursorBridge() {
+    if (!this.hasBridgeEndpoint("cursor-bridge")) return;
+
+    await this.cursorBridgeMgr.autoConnectIfConfigured({
+      config: this.config,
+      endpointMgr: this.endpointMgr,
+      defaultSystemPrompt: DEFAULT_SYSTEM_PROMPT,
+      workspaceRoot: this.getWorkspaceRoot(),
+    });
+
+    this.startEndpointHealthChecks();
+    if (
+      this.endpointMgr.getActiveEndpointCapabilities().kind ===
+      "cursor-bridge"
+    ) {
+      await this.refreshModels(this.endpointMgr.getResolvedActiveEndpointUrl());
+      return;
+    }
+    this.pushSettingsState();
+    this.postState();
+    this.updateStatusBar();
+  }
+
+  private async autoConnectConfiguredOpenCodeBridge() {
+    if (!this.hasBridgeEndpoint("opencode-bridge")) return;
+
+    await this.opencodeBridgeMgr.autoConnectIfConfigured({
+      config: this.config,
+      endpointMgr: this.endpointMgr,
+      defaultSystemPrompt: DEFAULT_SYSTEM_PROMPT,
+      workspaceRoot: this.getWorkspaceRoot(),
+    });
+
+    this.startEndpointHealthChecks();
+    if (
+      this.endpointMgr.getActiveEndpointCapabilities().kind ===
+      "opencode-bridge"
+    ) {
+      await this.refreshModels(this.endpointMgr.getResolvedActiveEndpointUrl());
+      return;
+    }
+    this.pushSettingsState();
+    this.postState();
+    this.updateStatusBar();
+  }
+
   private async handleEndpointSelection(sessionId: string, endpointUrl: string) {
     const session = this.sessionMgr.requireSession(sessionId);
     if (!session) return;
@@ -630,7 +735,130 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
       await this.autoConnectConfiguredClaudeBridge();
       return;
     }
+    if (providerKind === "cursor-bridge") {
+      await this.autoConnectConfiguredCursorBridge();
+      return;
+    }
+    if (providerKind === "opencode-bridge") {
+      await this.autoConnectConfiguredOpenCodeBridge();
+      return;
+    }
     await this.refreshModels(resolvedEndpointUrl);
+  }
+
+  private getBridgeUsagePollEndpoints(): string[] {
+    const urls = new Set<string>();
+    const addIfBridge = (url: string | undefined) => {
+      if (!url) return;
+      const resolved = normalizeEndpointInputUrl(url);
+      const kind = this.endpointMgr.getEndpointCapabilities(resolved).kind;
+      if (
+        kind === "codex-bridge" ||
+        kind === "claude-bridge" ||
+        kind === "cursor-bridge" ||
+        kind === "opencode-bridge"
+      ) {
+        urls.add(resolved);
+      }
+    };
+
+    addIfBridge(this.endpointMgr.getResolvedActiveEndpointUrl());
+    for (const session of this.sessionMgr.sessions.values()) {
+      addIfBridge(session.selectedEndpoint);
+    }
+
+    for (const health of this.endpointMgr.endpointHealthMap.values()) {
+      if (health.healthy) addIfBridge(health.url);
+    }
+
+    return Array.from(urls);
+  }
+
+  private async refreshBridgeUsageForEndpoint(
+    endpointUrl: string,
+    options: { post?: boolean } = {},
+  ): Promise<boolean> {
+    const resolvedEndpointUrl = normalizeEndpointInputUrl(endpointUrl);
+    const kind = this.endpointMgr.getEndpointCapabilities(resolvedEndpointUrl).kind;
+    if (
+      kind !== "codex-bridge" &&
+      kind !== "claude-bridge" &&
+      kind !== "cursor-bridge" &&
+      kind !== "opencode-bridge"
+    ) {
+      return false;
+    }
+
+    const endpoint = this.endpointMgr.getEndpointConfig(resolvedEndpointUrl);
+    const apiKey = endpoint.apiKey?.trim() || "local-pocketai";
+    let nextState: BridgeUsageState;
+
+    try {
+      const response = await fetch(`${resolvedEndpointUrl}/usage`, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!response.ok) {
+        nextState = {
+          fetchError: `HTTP ${response.status}`,
+          fetchedAt: Date.now(),
+        };
+      } else {
+        nextState = {
+          usage: (await response.json()) as BridgeUsageResponse,
+          fetchedAt: Date.now(),
+        };
+      }
+    } catch (error) {
+      nextState = {
+        fetchError:
+          error instanceof Error ? error.message : "Unknown bridge usage error",
+        fetchedAt: Date.now(),
+      };
+    }
+
+    const previous = JSON.stringify(
+      this.bridgeUsageByEndpoint.get(resolvedEndpointUrl) ?? {},
+    );
+    const next = JSON.stringify(nextState);
+    this.bridgeUsageByEndpoint.set(resolvedEndpointUrl, nextState);
+
+    if (options.post && previous !== next) {
+      this.postState();
+      this.pushSettingsState();
+      this.updateStatusBar();
+    }
+
+    return previous !== next;
+  }
+
+  private async refreshBridgeUsage(options: { post?: boolean } = {}) {
+    const endpoints = this.getBridgeUsagePollEndpoints();
+    let changed = false;
+    for (const endpoint of endpoints) {
+      changed =
+        (await this.refreshBridgeUsageForEndpoint(endpoint, { post: false })) ||
+        changed;
+    }
+
+    if (options.post && changed) {
+      this.postState();
+      this.pushSettingsState();
+      this.updateStatusBar();
+    }
+  }
+
+  private startBridgeUsagePolling() {
+    if (this.bridgeUsageTimer) {
+      clearInterval(this.bridgeUsageTimer);
+      this.bridgeUsageTimer = undefined;
+    }
+
+    void this.refreshBridgeUsage({ post: true });
+    this.bridgeUsageTimer = setInterval(
+      () => void this.refreshBridgeUsage({ post: true }),
+      60_000,
+    );
   }
 
   /* ── Project Instructions (.pocketai.md / AGENTS.md / CLAUDE.md) ── */
@@ -947,6 +1175,10 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
               void this.autoConnectConfiguredCodexBridge();
             } else if (providerKind === "claude-bridge") {
               void this.autoConnectConfiguredClaudeBridge();
+            } else if (providerKind === "cursor-bridge") {
+              void this.autoConnectConfiguredCursorBridge();
+            } else if (providerKind === "opencode-bridge") {
+              void this.autoConnectConfiguredOpenCodeBridge();
             }
             break;
           }
@@ -1060,6 +1292,72 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
             }
             break;
           }
+          case "connectCursor": {
+            try {
+              const state = await this.cursorBridgeMgr.connect({
+                config: this.config,
+                endpointMgr: this.endpointMgr,
+                defaultSystemPrompt: DEFAULT_SYSTEM_PROMPT,
+                workspaceRoot: this.getWorkspaceRoot(),
+              });
+              this.startEndpointHealthChecks();
+              this.pushSettingsState();
+              this.postState();
+              this.updateStatusBar();
+
+              if (state.loggedIn) {
+                void vscode.window.showInformationMessage(
+                  "Cursor connected. PocketAI is now using the Cursor CLI Bridge endpoint.",
+                );
+                await this.refreshModels();
+              } else {
+                void vscode.window.showInformationMessage(
+                  "Finish signing in to Cursor in the terminal we opened. PocketAI will connect automatically when sign-in finishes.",
+                );
+              }
+            } catch (error) {
+              void vscode.window.showErrorMessage(
+                error instanceof Error
+                  ? error.message
+                  : "Failed to connect to Cursor.",
+              );
+              this.pushSettingsState();
+            }
+            break;
+          }
+          case "connectOpenCode": {
+            try {
+              const state = await this.opencodeBridgeMgr.connect({
+                config: this.config,
+                endpointMgr: this.endpointMgr,
+                defaultSystemPrompt: DEFAULT_SYSTEM_PROMPT,
+                workspaceRoot: this.getWorkspaceRoot(),
+              });
+              this.startEndpointHealthChecks();
+              this.pushSettingsState();
+              this.postState();
+              this.updateStatusBar();
+
+              if (state.loggedIn) {
+                void vscode.window.showInformationMessage(
+                  "OpenCode connected. PocketAI is now using the OpenCode CLI Bridge endpoint.",
+                );
+                await this.refreshModels();
+              } else {
+                void vscode.window.showInformationMessage(
+                  "Finish signing in to OpenCode in the terminal we opened. PocketAI will connect automatically when sign-in finishes.",
+                );
+              }
+            } catch (error) {
+              void vscode.window.showErrorMessage(
+                error instanceof Error
+                  ? error.message
+                  : "Failed to connect to OpenCode.",
+              );
+              this.pushSettingsState();
+            }
+            break;
+          }
           case "signInCodex": {
             try {
               await this.codexBridgeMgr.signIn(
@@ -1075,6 +1373,44 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
                 error instanceof Error
                   ? error.message
                   : "Failed to start Codex sign-in.",
+              );
+            }
+            break;
+          }
+          case "signInCursor": {
+            try {
+              await this.cursorBridgeMgr.signIn(
+                this.getWorkspaceRoot(),
+                this.endpointMgr,
+              );
+              this.pushSettingsState();
+              void vscode.window.showInformationMessage(
+                "A terminal was opened for Cursor sign-in. Finish the login flow there, then PocketAI will refresh automatically.",
+              );
+            } catch (error) {
+              void vscode.window.showErrorMessage(
+                error instanceof Error
+                  ? error.message
+                  : "Failed to start Cursor sign-in.",
+              );
+            }
+            break;
+          }
+          case "signInOpenCode": {
+            try {
+              await this.opencodeBridgeMgr.signIn(
+                this.getWorkspaceRoot(),
+                this.endpointMgr,
+              );
+              this.pushSettingsState();
+              void vscode.window.showInformationMessage(
+                "A terminal was opened for OpenCode sign-in. Finish the login flow there, then PocketAI will refresh automatically.",
+              );
+            } catch (error) {
+              void vscode.window.showErrorMessage(
+                error instanceof Error
+                  ? error.message
+                  : "Failed to start OpenCode sign-in.",
               );
             }
             break;
@@ -1105,6 +1441,34 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
           }
           case "refreshClaudeStatus": {
             await this.claudeBridgeMgr.refresh(this.endpointMgr);
+            this.pushSettingsState();
+            break;
+          }
+          case "refreshCursorStatus": {
+            await this.cursorBridgeMgr.refresh(this.endpointMgr);
+            this.pushSettingsState();
+            break;
+          }
+          case "refreshOpenCodeStatus": {
+            await this.opencodeBridgeMgr.refresh(this.endpointMgr);
+            this.pushSettingsState();
+            break;
+          }
+          case "refreshBridgeUsage": {
+            const provider = String(message.provider || "").trim();
+            const endpointUrl =
+              provider === "codex"
+                ? CODEX_BRIDGE_URL
+                : provider === "claude"
+                  ? CLAUDE_BRIDGE_URL
+                  : provider === "cursor"
+                    ? CURSOR_BRIDGE_URL
+                    : provider === "opencode"
+                      ? OPENCODE_BRIDGE_URL
+                      : this.endpointMgr.getResolvedActiveEndpointUrl();
+            await this.refreshBridgeUsageForEndpoint(endpointUrl, {
+              post: true,
+            });
             this.pushSettingsState();
             break;
           }
@@ -1174,6 +1538,8 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
     const endpointsState = this.endpointMgr.getEndpoints();
     const codexState = this.codexBridgeMgr.getState(this.endpointMgr);
     const claudeState = this.claudeBridgeMgr.getState(this.endpointMgr);
+    const cursorState = this.cursorBridgeMgr.getState(this.endpointMgr);
+    const opencodeState = this.opencodeBridgeMgr.getState(this.endpointMgr);
     const codexReasoningControls = buildCodexReasoningControlsState({
       selectedModel: codexState.selectedModel,
       selectedReasoningEffort: codexState.selectedReasoningEffort,
@@ -1218,7 +1584,21 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
           codexReasoningControls.selectedReasoningEffort,
         reasoningOptions: codexReasoningControls.reasoningOptions,
       },
+      codexUsage: this.bridgeUsageByEndpoint.get(
+        normalizeEndpointInputUrl(CODEX_BRIDGE_URL),
+      ),
       claude: claudeState,
+      claudeUsage: this.bridgeUsageByEndpoint.get(
+        normalizeEndpointInputUrl(CLAUDE_BRIDGE_URL),
+      ),
+      cursor: cursorState,
+      cursorUsage: this.bridgeUsageByEndpoint.get(
+        normalizeEndpointInputUrl(CURSOR_BRIDGE_URL),
+      ),
+      opencode: opencodeState,
+      opencodeUsage: this.bridgeUsageByEndpoint.get(
+        normalizeEndpointInputUrl(OPENCODE_BRIDGE_URL),
+      ),
     });
   }
 
@@ -1342,6 +1722,10 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
       this.sessionMgr.touchSession(session);
       await this.sessionMgr.saveState();
       this.postState();
+      void this.refreshBridgeUsageForEndpoint(
+        this.getSessionEndpointUrl(session),
+        { post: true },
+      );
     }
   }
 
@@ -1821,8 +2205,9 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
   }
 
   private async refreshModels(endpointUrl?: string) {
+    const resolvedEndpointUrl = this.endpointMgr.getResolvedEndpointUrl(endpointUrl);
     await this.endpointMgr.refreshModels(
-      endpointUrl,
+      resolvedEndpointUrl,
       this.sessionMgr.sessions,
       () => this.sessionMgr.saveState(),
       (models) => this.sessionMgr.getPreferredModel(models),
@@ -1830,6 +2215,7 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
     this.postState();
     this.pushSettingsState();
     this.updateStatusBar();
+    void this.refreshBridgeUsageForEndpoint(resolvedEndpointUrl, { post: true });
   }
 
   /* ── State broadcast ── */
@@ -1925,6 +2311,7 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
       runtimeHealth,
       worktreeRoot: session.worktreeRoot || undefined,
       permissionSummary,
+      bridgeUsage: this.bridgeUsageByEndpoint.get(selectedEndpointUrl),
     } satisfies ExtensionToWebviewMessage);
   }
 

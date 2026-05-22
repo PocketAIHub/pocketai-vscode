@@ -121,7 +121,12 @@ function buildBridgeToolDisciplinePrompt(
   prompt: string,
   providerKind?: EndpointProviderKind,
 ): string | undefined {
-  if (providerKind !== "codex-bridge" && providerKind !== "claude-bridge") {
+  if (
+    providerKind !== "codex-bridge" &&
+    providerKind !== "claude-bridge" &&
+    providerKind !== "cursor-bridge" &&
+    providerKind !== "opencode-bridge"
+  ) {
     return undefined;
   }
 

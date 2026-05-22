@@ -148,6 +148,10 @@ export function getSettingsHtml(nonce: string): string {
     font-weight: 600;
     text-align: right;
   }
+  .usage-value.ok { color: #4ec9b0; }
+  .usage-value.warning { color: #d7ba7d; }
+  .usage-value.danger { color: var(--danger); }
+  .usage-value.unknown { color: var(--fg-muted); }
   .codex-actions {
     display: flex;
     gap: 8px;
@@ -406,11 +410,13 @@ export function getSettingsHtml(nonce: string): string {
         <div class="codex-meta-row"><span>Account</span><strong id="codexAccountStatus">Checking...</strong></div>
         <div class="codex-meta-row"><span>Bridge</span><strong id="codexBridgeStatus">Not started</strong></div>
         <div class="codex-meta-row"><span>Endpoint</span><strong id="codexEndpointStatus">Not added yet</strong></div>
+        <div class="codex-meta-row"><span>Usage</span><strong class="usage-value unknown" id="codexUsageStatus">Not checked</strong></div>
       </div>
       <div class="codex-actions">
         <button class="codex-primary-btn" id="connectCodexBtn">Connect to Codex CLI</button>
         <button class="codex-secondary-btn" id="signInCodexBtn">Sign In</button>
         <button class="codex-secondary-btn" id="refreshCodexBtn">Refresh</button>
+        <button class="codex-secondary-btn" id="codexUsageBtn">Usage</button>
       </div>
       <p class="hint">This keeps Codex chat-first inside PocketAI for now. Other endpoints can continue using their existing tool-call flow.</p>
     </div>
@@ -436,13 +442,79 @@ export function getSettingsHtml(nonce: string): string {
         <div class="codex-meta-row"><span>Bridge</span><strong id="claudeBridgeStatus">Not started</strong></div>
         <div class="codex-meta-row"><span>Endpoint</span><strong id="claudeEndpointStatus">Not added yet</strong></div>
         <div class="codex-meta-row"><span>Models</span><strong id="claudeModelsStatus">Checking...</strong></div>
+        <div class="codex-meta-row"><span>Usage</span><strong class="usage-value unknown" id="claudeUsageStatus">Not checked</strong></div>
       </div>
       <div class="codex-actions">
         <button class="codex-primary-btn" id="connectClaudeBtn">Connect to Claude CLI</button>
         <button class="codex-secondary-btn" id="signInClaudeBtn">Sign In</button>
         <button class="codex-secondary-btn" id="refreshClaudeBtn">Refresh</button>
+        <button class="codex-secondary-btn" id="claudeUsageBtn">Usage</button>
       </div>
       <p class="hint">This keeps Claude chat-first inside PocketAI for now. PocketAI tools still stay in charge of the coding workflow.</p>
+    </div>
+  </div>
+
+  <h3>Cursor</h3>
+  <div class="codex-card collapsed" id="cursorCard">
+    <div class="codex-header" id="cursorHeader">
+      <div>
+        <div class="codex-title">Connect to Cursor CLI</div>
+        <div class="codex-subtitle">Use your Cursor CLI account and Composer models right from PocketAI. We'll add the endpoint, start the bridge, and switch to it for you.</div>
+      </div>
+      <div class="codex-header-right">
+        <span class="codex-badge ready" id="cursorBadge">Checking...</span>
+        <span class="codex-caret" id="cursorCaret">&#9662;</span>
+      </div>
+    </div>
+    <div class="codex-body" id="cursorBody">
+      <div class="codex-status" id="cursorStatus">Checking Cursor status...</div>
+      <div class="codex-meta">
+        <div class="codex-meta-row"><span>CLI</span><strong id="cursorCliStatus">Checking...</strong></div>
+        <div class="codex-meta-row"><span>Account</span><strong id="cursorAccountStatus">Checking...</strong></div>
+        <div class="codex-meta-row"><span>Bridge</span><strong id="cursorBridgeStatus">Not started</strong></div>
+        <div class="codex-meta-row"><span>Endpoint</span><strong id="cursorEndpointStatus">Not added yet</strong></div>
+        <div class="codex-meta-row"><span>Models</span><strong id="cursorModelsStatus">Checking...</strong></div>
+        <div class="codex-meta-row"><span>Usage</span><strong class="usage-value unknown" id="cursorUsageStatus">Not checked</strong></div>
+      </div>
+      <div class="codex-actions">
+        <button class="codex-primary-btn" id="connectCursorBtn">Connect to Cursor CLI</button>
+        <button class="codex-secondary-btn" id="signInCursorBtn">Sign In</button>
+        <button class="codex-secondary-btn" id="refreshCursorBtn">Refresh</button>
+        <button class="codex-secondary-btn" id="cursorUsageBtn">Usage</button>
+      </div>
+      <p class="hint">This keeps Cursor chat-first inside PocketAI. PocketAI tools still stay in charge of repo actions.</p>
+    </div>
+  </div>
+
+  <h3>OpenCode</h3>
+  <div class="codex-card collapsed" id="opencodeCard">
+    <div class="codex-header" id="opencodeHeader">
+      <div>
+        <div class="codex-title">Connect to OpenCode CLI</div>
+        <div class="codex-subtitle">Use your OpenCode CLI providers right from PocketAI. We'll add the endpoint, start the bridge, and switch to it for you.</div>
+      </div>
+      <div class="codex-header-right">
+        <span class="codex-badge ready" id="opencodeBadge">Checking...</span>
+        <span class="codex-caret" id="opencodeCaret">&#9662;</span>
+      </div>
+    </div>
+    <div class="codex-body" id="opencodeBody">
+      <div class="codex-status" id="opencodeStatus">Checking OpenCode status...</div>
+      <div class="codex-meta">
+        <div class="codex-meta-row"><span>CLI</span><strong id="opencodeCliStatus">Checking...</strong></div>
+        <div class="codex-meta-row"><span>Credentials</span><strong id="opencodeAccountStatus">Checking...</strong></div>
+        <div class="codex-meta-row"><span>Bridge</span><strong id="opencodeBridgeStatus">Not started</strong></div>
+        <div class="codex-meta-row"><span>Endpoint</span><strong id="opencodeEndpointStatus">Not added yet</strong></div>
+        <div class="codex-meta-row"><span>Models</span><strong id="opencodeModelsStatus">Checking...</strong></div>
+        <div class="codex-meta-row"><span>Usage</span><strong class="usage-value unknown" id="opencodeUsageStatus">Not checked</strong></div>
+      </div>
+      <div class="codex-actions">
+        <button class="codex-primary-btn" id="connectOpenCodeBtn">Connect to OpenCode CLI</button>
+        <button class="codex-secondary-btn" id="signInOpenCodeBtn">Sign In</button>
+        <button class="codex-secondary-btn" id="refreshOpenCodeBtn">Refresh</button>
+        <button class="codex-secondary-btn" id="opencodeUsageBtn">Usage</button>
+      </div>
+      <p class="hint">This keeps OpenCode chat-first inside PocketAI. PocketAI tools still stay in charge of repo actions.</p>
     </div>
   </div>
 
@@ -499,10 +571,12 @@ export function getSettingsHtml(nonce: string): string {
   const codexAccountStatus = document.getElementById("codexAccountStatus");
   const codexBridgeStatus = document.getElementById("codexBridgeStatus");
   const codexEndpointStatus = document.getElementById("codexEndpointStatus");
+  const codexUsageStatus = document.getElementById("codexUsageStatus");
   const codexReasoningSelect = document.getElementById("codexReasoningSelect");
   const connectCodexBtn = document.getElementById("connectCodexBtn");
   const signInCodexBtn = document.getElementById("signInCodexBtn");
   const refreshCodexBtn = document.getElementById("refreshCodexBtn");
+  const codexUsageBtn = document.getElementById("codexUsageBtn");
   const claudeCard = document.getElementById("claudeCard");
   const claudeBadge = document.getElementById("claudeBadge");
   const claudeHeader = document.getElementById("claudeHeader");
@@ -514,13 +588,49 @@ export function getSettingsHtml(nonce: string): string {
   const claudeBridgeStatus = document.getElementById("claudeBridgeStatus");
   const claudeEndpointStatus = document.getElementById("claudeEndpointStatus");
   const claudeModelsStatus = document.getElementById("claudeModelsStatus");
+  const claudeUsageStatus = document.getElementById("claudeUsageStatus");
   const connectClaudeBtn = document.getElementById("connectClaudeBtn");
   const signInClaudeBtn = document.getElementById("signInClaudeBtn");
   const refreshClaudeBtn = document.getElementById("refreshClaudeBtn");
+  const claudeUsageBtn = document.getElementById("claudeUsageBtn");
+  const cursorCard = document.getElementById("cursorCard");
+  const cursorBadge = document.getElementById("cursorBadge");
+  const cursorHeader = document.getElementById("cursorHeader");
+  const cursorBody = document.getElementById("cursorBody");
+  const cursorCaret = document.getElementById("cursorCaret");
+  const cursorStatus = document.getElementById("cursorStatus");
+  const cursorCliStatus = document.getElementById("cursorCliStatus");
+  const cursorAccountStatus = document.getElementById("cursorAccountStatus");
+  const cursorBridgeStatus = document.getElementById("cursorBridgeStatus");
+  const cursorEndpointStatus = document.getElementById("cursorEndpointStatus");
+  const cursorModelsStatus = document.getElementById("cursorModelsStatus");
+  const cursorUsageStatus = document.getElementById("cursorUsageStatus");
+  const connectCursorBtn = document.getElementById("connectCursorBtn");
+  const signInCursorBtn = document.getElementById("signInCursorBtn");
+  const refreshCursorBtn = document.getElementById("refreshCursorBtn");
+  const cursorUsageBtn = document.getElementById("cursorUsageBtn");
+  const opencodeCard = document.getElementById("opencodeCard");
+  const opencodeBadge = document.getElementById("opencodeBadge");
+  const opencodeHeader = document.getElementById("opencodeHeader");
+  const opencodeBody = document.getElementById("opencodeBody");
+  const opencodeCaret = document.getElementById("opencodeCaret");
+  const opencodeStatus = document.getElementById("opencodeStatus");
+  const opencodeCliStatus = document.getElementById("opencodeCliStatus");
+  const opencodeAccountStatus = document.getElementById("opencodeAccountStatus");
+  const opencodeBridgeStatus = document.getElementById("opencodeBridgeStatus");
+  const opencodeEndpointStatus = document.getElementById("opencodeEndpointStatus");
+  const opencodeModelsStatus = document.getElementById("opencodeModelsStatus");
+  const opencodeUsageStatus = document.getElementById("opencodeUsageStatus");
+  const connectOpenCodeBtn = document.getElementById("connectOpenCodeBtn");
+  const signInOpenCodeBtn = document.getElementById("signInOpenCodeBtn");
+  const refreshOpenCodeBtn = document.getElementById("refreshOpenCodeBtn");
+  const opencodeUsageBtn = document.getElementById("opencodeUsageBtn");
   let currentState = null;
   const expandedEndpoints = new Set();
   let codexExpanded = false;
   let claudeExpanded = false;
+  let cursorExpanded = false;
+  let opencodeExpanded = false;
   const PROVIDER_PRESETS = {
     "opencode-go": {
       url: "https://opencode.ai/zen/go",
@@ -574,6 +684,9 @@ export function getSettingsHtml(nonce: string): string {
   refreshCodexBtn.addEventListener("click", () => {
     vscode.postMessage({ type: "refreshCodexStatus" });
   });
+  codexUsageBtn.addEventListener("click", () => {
+    vscode.postMessage({ type: "refreshBridgeUsage", provider: "codex" });
+  });
   codexReasoningSelect.addEventListener("change", () => {
     vscode.postMessage({ type: "updateCodexReasoning", value: codexReasoningSelect.value });
   });
@@ -592,11 +705,50 @@ export function getSettingsHtml(nonce: string): string {
   refreshClaudeBtn.addEventListener("click", () => {
     vscode.postMessage({ type: "refreshClaudeStatus" });
   });
+  claudeUsageBtn.addEventListener("click", () => {
+    vscode.postMessage({ type: "refreshBridgeUsage", provider: "claude" });
+  });
   claudeHeader.addEventListener("click", () => {
     claudeExpanded = !claudeExpanded;
     claudeCard.classList.toggle("collapsed", !claudeExpanded);
     claudeBody.classList.toggle("open", claudeExpanded);
     claudeCaret.classList.toggle("open", claudeExpanded);
+  });
+  connectCursorBtn.addEventListener("click", () => {
+    vscode.postMessage({ type: "connectCursor" });
+  });
+  signInCursorBtn.addEventListener("click", () => {
+    vscode.postMessage({ type: "signInCursor" });
+  });
+  refreshCursorBtn.addEventListener("click", () => {
+    vscode.postMessage({ type: "refreshCursorStatus" });
+  });
+  cursorUsageBtn.addEventListener("click", () => {
+    vscode.postMessage({ type: "refreshBridgeUsage", provider: "cursor" });
+  });
+  cursorHeader.addEventListener("click", () => {
+    cursorExpanded = !cursorExpanded;
+    cursorCard.classList.toggle("collapsed", !cursorExpanded);
+    cursorBody.classList.toggle("open", cursorExpanded);
+    cursorCaret.classList.toggle("open", cursorExpanded);
+  });
+  connectOpenCodeBtn.addEventListener("click", () => {
+    vscode.postMessage({ type: "connectOpenCode" });
+  });
+  signInOpenCodeBtn.addEventListener("click", () => {
+    vscode.postMessage({ type: "signInOpenCode" });
+  });
+  refreshOpenCodeBtn.addEventListener("click", () => {
+    vscode.postMessage({ type: "refreshOpenCodeStatus" });
+  });
+  opencodeUsageBtn.addEventListener("click", () => {
+    vscode.postMessage({ type: "refreshBridgeUsage", provider: "opencode" });
+  });
+  opencodeHeader.addEventListener("click", () => {
+    opencodeExpanded = !opencodeExpanded;
+    opencodeCard.classList.toggle("collapsed", !opencodeExpanded);
+    opencodeBody.classList.toggle("open", opencodeExpanded);
+    opencodeCaret.classList.toggle("open", opencodeExpanded);
   });
 
   addTriggerBtn.addEventListener("click", () => {
@@ -635,6 +787,65 @@ export function getSettingsHtml(nonce: string): string {
     addForm.classList.add("hidden");
     addTriggerBtn.style.display = "flex";
   });
+
+  function formatUsageDate(value) {
+    if (!value) return "";
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return value;
+    return date.toLocaleString();
+  }
+
+  function getUsageSummary(usageState, providerName) {
+    usageState = usageState || {};
+    const usage = usageState.usage || {};
+    if (usageState.fetchError) {
+      return {
+        text: "Unavailable",
+        title: "Could not read usage: " + usageState.fetchError,
+        level: "unknown",
+      };
+    }
+
+    const limits = Array.isArray(usage.limits) ? usage.limits : [];
+    let highestLimit = null;
+    for (const limit of limits) {
+      if (typeof limit.usedPercent !== "number") continue;
+      if (!highestLimit || limit.usedPercent > highestLimit.usedPercent) {
+        highestLimit = limit;
+      }
+    }
+
+    if (highestLimit) {
+      const pct = Math.round(highestLimit.usedPercent);
+      const level = pct >= 90 ? "danger" : pct >= 70 ? "warning" : "ok";
+      const reset = highestLimit.resetsAt ? " Resets " + formatUsageDate(highestLimit.resetsAt) + "." : "";
+      return {
+        text: pct + "% used",
+        title: (highestLimit.label || providerName + " usage") + ": " + pct + "% used." + reset,
+        level,
+      };
+    }
+
+    if (usage.message) {
+      return {
+        text: "See note",
+        title: usage.message,
+        level: "unknown",
+      };
+    }
+
+    return {
+      text: "Not checked",
+      title: "Usage has not been checked yet.",
+      level: "unknown",
+    };
+  }
+
+  function renderUsageValue(element, summary) {
+    element.textContent = summary.text;
+    element.title = summary.title;
+    element.className = "usage-value " + summary.level;
+  }
 
   function renderCodex(state) {
     const codex = state.codex || {};
@@ -680,6 +891,7 @@ export function getSettingsHtml(nonce: string): string {
       : codex.endpointConfigured
         ? "Saved"
         : "Not added yet";
+    renderUsageValue(codexUsageStatus, getUsageSummary(state.codexUsage, "Codex"));
 
     connectCodexBtn.textContent = codex.busy
       ? "Connecting..."
@@ -691,6 +903,7 @@ export function getSettingsHtml(nonce: string): string {
     signInCodexBtn.style.display = codex.loggedIn ? "none" : "inline-flex";
     signInCodexBtn.disabled = !!codex.busy || !codex.available;
     refreshCodexBtn.disabled = !!codex.busy;
+    codexUsageBtn.disabled = !!codex.busy || !codex.bridgeRunning;
 
     const reasoningOptions = Array.isArray(codex.reasoningOptions) ? codex.reasoningOptions : [];
     let reasoningHtml = '<option value="">Auto</option>';
@@ -750,6 +963,7 @@ export function getSettingsHtml(nonce: string): string {
     claudeModelsStatus.textContent = models.length
       ? models.map((model) => model.displayName || model.id || "").filter(Boolean).join(", ")
       : "Waiting for bridge";
+    renderUsageValue(claudeUsageStatus, getUsageSummary(state.claudeUsage, "Claude"));
 
     connectClaudeBtn.textContent = claude.busy
       ? "Connecting..."
@@ -761,6 +975,131 @@ export function getSettingsHtml(nonce: string): string {
     signInClaudeBtn.style.display = claude.loggedIn ? "none" : "inline-flex";
     signInClaudeBtn.disabled = !!claude.busy || !claude.available;
     refreshClaudeBtn.disabled = !!claude.busy;
+    claudeUsageBtn.disabled = !!claude.busy || !claude.bridgeRunning;
+  }
+
+  function renderCursor(state) {
+    const cursor = state.cursor || {};
+    const models = Array.isArray(cursor.models) ? cursor.models : [];
+    const isConnected = !!(cursor.available && cursor.loggedIn && cursor.endpointActive && cursor.endpointHealthy);
+    const isReady = !!(cursor.available && cursor.loggedIn && cursor.bridgeRunning);
+
+    let badgeLabel = "Connect";
+    let badgeClass = "ready";
+    if (cursor.busy) {
+      badgeLabel = "Working";
+      badgeClass = "ready";
+    } else if (isConnected) {
+      badgeLabel = "Connected";
+      badgeClass = "connected";
+    } else if (!cursor.available) {
+      badgeLabel = "Not Found";
+      badgeClass = "offline";
+    } else if (!cursor.loggedIn) {
+      badgeLabel = "Sign In";
+      badgeClass = "warning";
+    } else if (isReady) {
+      badgeLabel = "Ready";
+      badgeClass = "ready";
+    }
+
+    cursorBadge.textContent = badgeLabel;
+    cursorBadge.className = "codex-badge " + badgeClass;
+
+    const statusText = cursor.status || "One click will add the endpoint and start Cursor for you.";
+    cursorStatus.textContent = statusText;
+    cursorStatus.className = "codex-status" + (cursor.error ? " error" : "");
+
+    cursorCliStatus.textContent = cursor.available ? "Detected" : "Not found";
+    cursorAccountStatus.textContent = cursor.available
+      ? (cursor.loginLabel || (cursor.loggedIn ? "Logged in" : "Sign in required"))
+      : "Unavailable";
+    cursorBridgeStatus.textContent = cursor.bridgeRunning
+      ? "Running on 127.0.0.1:39461"
+      : "Not started";
+    cursorEndpointStatus.textContent = cursor.endpointActive
+      ? (cursor.endpointHealthy ? "Active and healthy" : "Active")
+      : cursor.endpointConfigured
+        ? "Saved"
+        : "Not added yet";
+    cursorModelsStatus.textContent = models.length
+      ? models.map((model) => model.displayName || model.id || "").filter(Boolean).join(", ")
+      : "Waiting for bridge";
+    renderUsageValue(cursorUsageStatus, getUsageSummary(state.cursorUsage, "Cursor"));
+
+    connectCursorBtn.textContent = cursor.busy
+      ? "Connecting..."
+      : isConnected && models.length > 0
+        ? "Connected"
+        : "Connect to Cursor CLI";
+    connectCursorBtn.disabled = !!cursor.busy || (isConnected && models.length > 0) || !cursor.available;
+
+    signInCursorBtn.style.display = cursor.loggedIn ? "none" : "inline-flex";
+    signInCursorBtn.disabled = !!cursor.busy || !cursor.available;
+    refreshCursorBtn.disabled = !!cursor.busy;
+    cursorUsageBtn.disabled = !!cursor.busy || !cursor.bridgeRunning;
+  }
+
+  function renderOpenCode(state) {
+    const opencode = state.opencode || {};
+    const models = Array.isArray(opencode.models) ? opencode.models : [];
+    const isConnected = !!(opencode.available && opencode.loggedIn && opencode.endpointActive && opencode.endpointHealthy);
+    const isReady = !!(opencode.available && opencode.loggedIn && opencode.bridgeRunning);
+
+    let badgeLabel = "Connect";
+    let badgeClass = "ready";
+    if (opencode.busy) {
+      badgeLabel = "Working";
+      badgeClass = "ready";
+    } else if (isConnected) {
+      badgeLabel = "Connected";
+      badgeClass = "connected";
+    } else if (!opencode.available) {
+      badgeLabel = "Not Found";
+      badgeClass = "offline";
+    } else if (!opencode.loggedIn) {
+      badgeLabel = "Sign In";
+      badgeClass = "warning";
+    } else if (isReady) {
+      badgeLabel = "Ready";
+      badgeClass = "ready";
+    }
+
+    opencodeBadge.textContent = badgeLabel;
+    opencodeBadge.className = "codex-badge " + badgeClass;
+
+    const statusText = opencode.status || "One click will add the endpoint and start OpenCode for you.";
+    opencodeStatus.textContent = statusText;
+    opencodeStatus.className = "codex-status" + (opencode.error ? " error" : "");
+
+    opencodeCliStatus.textContent = opencode.available ? "Detected" : "Not found";
+    opencodeAccountStatus.textContent = opencode.available
+      ? (opencode.loginLabel || (opencode.loggedIn ? "Credentials configured" : "Sign in required"))
+      : "Unavailable";
+    opencodeBridgeStatus.textContent = opencode.bridgeRunning
+      ? "Running on 127.0.0.1:39462"
+      : "Not started";
+    opencodeEndpointStatus.textContent = opencode.endpointActive
+      ? (opencode.endpointHealthy ? "Active and healthy" : "Active")
+      : opencode.endpointConfigured
+        ? "Saved"
+        : "Not added yet";
+    opencodeModelsStatus.textContent = models.length
+      ? models.map((model) => model.displayName || model.id || "").filter(Boolean).join(", ")
+      : "Waiting for bridge";
+    renderUsageValue(opencodeUsageStatus, getUsageSummary(state.opencodeUsage, "OpenCode"));
+
+    connectOpenCodeBtn.textContent = opencode.busy
+      ? "Connecting..."
+      : isConnected && models.length > 0
+        ? "Connected"
+        : "Connect to OpenCode CLI";
+    connectOpenCodeBtn.disabled = !!opencode.busy || (isConnected && models.length > 0) || !opencode.available;
+
+    signInOpenCodeBtn.style.display = opencode.loggedIn ? "none" : "inline-flex";
+    signInOpenCodeBtn.disabled = !!opencode.busy || !opencode.available;
+    refreshOpenCodeBtn.disabled = !!opencode.busy;
+    opencodeUsageBtn.disabled = !!opencode.busy || !opencode.bridgeRunning;
   }
 
   function renderEndpoints(state) {
@@ -918,6 +1257,8 @@ export function getSettingsHtml(nonce: string): string {
       currentState = msg;
       renderCodex(msg);
       renderClaude(msg);
+      renderCursor(msg);
+      renderOpenCode(msg);
       renderEndpoints(msg);
     }
   });
