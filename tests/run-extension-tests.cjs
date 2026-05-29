@@ -3,6 +3,18 @@ const os = require("node:os");
 const path = require("node:path");
 const { runTests } = require("@vscode/test-electron");
 
+// When this script runs from inside VS Code's integrated terminal, VS Code's
+// own Electron/host env vars are inherited and leak into the test Electron we
+// spawn. ELECTRON_RUN_AS_NODE=1 in particular makes that Electron run as plain
+// Node, so it tries to execute the workspace folder as a script and fails with
+// "Cannot find module <workspacePath>". Strip these so the test launches a real
+// VS Code window regardless of where it's invoked from.
+for (const key of Object.keys(process.env)) {
+  if (key === "ELECTRON_RUN_AS_NODE" || key.startsWith("VSCODE_")) {
+    delete process.env[key];
+  }
+}
+
 function findLocalVSCodeExecutable() {
   if (process.env.VSCODE_TEST_EXECUTABLE) {
     return process.env.VSCODE_TEST_EXECUTABLE;

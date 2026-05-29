@@ -9,6 +9,11 @@ const OPENCODE_GO_CHAT_MODEL_IDS = [
   "opencode-go/glm-5",
   "opencode-go/glm-5.1",
   "opencode-go/kimi-k2.5",
+  "opencode-go/kimi-k2.6",
+  "opencode-go/deepseek-v4-pro",
+  "opencode-go/deepseek-v4-flash",
+  "opencode-go/mimo-v2.5",
+  "opencode-go/mimo-v2.5-pro",
   "opencode-go/mimo-v2-pro",
   "opencode-go/mimo-v2-omni",
 ];

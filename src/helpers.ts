@@ -106,6 +106,123 @@ export function parseToolCalls(text: string): ToolCall[] {
     });
   }
 
+  // skill_view — inspect a skill's main instructions or a support file
+  const skillViewRegex = /@skill_view:\s*(\S+)(.*?)(?:\n|$)/g;
+  while ((match = skillViewRegex.exec(text)) !== null) {
+    const rest = match[2] || "";
+    const pathMatch = rest.match(/--path\s+(.+)$/);
+    calls.push({
+      id: generateToolCallId(),
+      type: "skill_view",
+      filePath: pathMatch?.[1]?.trim() || "",
+      skillName: match[1].trim(),
+      status: "pending",
+    });
+  }
+
+  // skill_scan — scan a local directory or file for skill candidates
+  const skillScanRegex = /@skill_scan(?::\s*(.+?))?(?:\n|$)/g;
+  while ((match = skillScanRegex.exec(text)) !== null) {
+    calls.push({
+      id: generateToolCallId(),
+      type: "skill_scan",
+      filePath: match[1]?.trim() || "",
+      status: "pending",
+    });
+  }
+
+  // skill_install — install a local skill candidate with an optional id
+  const skillInstallRegex = /@skill_install:\s*(\S+)(.*?)(?:\n|$)/g;
+  while ((match = skillInstallRegex.exec(text)) !== null) {
+    const rest = match[2] || "";
+    const nameMatch = rest.match(/--name\s+(\S+)/);
+    calls.push({
+      id: generateToolCallId(),
+      type: "skill_install",
+      filePath: match[1].trim(),
+      skillName: nameMatch?.[1]?.trim() || "",
+      status: "pending",
+    });
+  }
+
+  // skill_manage — list or toggle installed workspace skills
+  const skillManageRegex = /@skill_manage:\s*(\S+)(?:\s+(\S+))?(?:\n|$)/g;
+  while ((match = skillManageRegex.exec(text)) !== null) {
+    calls.push({
+      id: generateToolCallId(),
+      type: "skill_manage",
+      filePath: "",
+      skillManageAction: match[1].trim(),
+      skillName: match[2]?.trim() || "",
+      status: "pending",
+    });
+  }
+
+  // mcp_list_resources — optional server filter
+  const mcpListResourcesRegex = /@mcp_list_resources(?::\s*(\S+))?(?:\n|$)/g;
+  while ((match = mcpListResourcesRegex.exec(text)) !== null) {
+    calls.push({
+      id: generateToolCallId(),
+      type: "mcp_list_resources",
+      filePath: "",
+      mcpServerName: match[1]?.trim() || "",
+      status: "pending",
+    });
+  }
+
+  // mcp_read_resource — server and resource URI
+  const mcpReadResourceRegex = /@mcp_read_resource:\s*(\S+)\s+(.+?)(?:\n|$)/g;
+  while ((match = mcpReadResourceRegex.exec(text)) !== null) {
+    calls.push({
+      id: generateToolCallId(),
+      type: "mcp_read_resource",
+      filePath: "",
+      mcpServerName: match[1].trim(),
+      mcpResourceUri: match[2].trim(),
+      status: "pending",
+    });
+  }
+
+  // mcp_list_resource_templates — optional server filter
+  const mcpListResourceTemplatesRegex = /@mcp_list_resource_templates(?::\s*(\S+))?(?:\n|$)/g;
+  while ((match = mcpListResourceTemplatesRegex.exec(text)) !== null) {
+    calls.push({
+      id: generateToolCallId(),
+      type: "mcp_list_resource_templates",
+      filePath: "",
+      mcpServerName: match[1]?.trim() || "",
+      status: "pending",
+    });
+  }
+
+  // mcp_list_prompts — optional server filter
+  const mcpListPromptsRegex = /@mcp_list_prompts(?::\s*(\S+))?(?:\n|$)/g;
+  while ((match = mcpListPromptsRegex.exec(text)) !== null) {
+    calls.push({
+      id: generateToolCallId(),
+      type: "mcp_list_prompts",
+      filePath: "",
+      mcpServerName: match[1]?.trim() || "",
+      status: "pending",
+    });
+  }
+
+  // mcp_get_prompt — server, prompt name, optional JSON arguments
+  const mcpGetPromptRegex = /@mcp_get_prompt:\s*(\S+)\s+(\S+)(.*?)(?:\n|$)/g;
+  while ((match = mcpGetPromptRegex.exec(text)) !== null) {
+    const rest = match[3] || "";
+    const argsMatch = rest.match(/--args\s+(.+)$/);
+    calls.push({
+      id: generateToolCallId(),
+      type: "mcp_get_prompt",
+      filePath: "",
+      mcpServerName: match[1].trim(),
+      mcpPromptName: match[2].trim(),
+      mcpArguments: argsMatch ? parseJsonObjectArg(argsMatch[1]) : undefined,
+      status: "pending",
+    });
+  }
+
   // diagnostics — optional path
   const diagnosticsRegex = /@diagnostics(?::\s*(.+?))?(?:\n|$)/g;
   while ((match = diagnosticsRegex.exec(text)) !== null) {
@@ -323,6 +440,91 @@ export function parseToolCalls(text: string): ToolCall[] {
     });
   }
 
+  // browser_navigate
+  const browserNavigateRegex = /@browser_navigate:\s*(.+?)(?:\n|$)/g;
+  while ((match = browserNavigateRegex.exec(text)) !== null) {
+    calls.push({
+      id: generateToolCallId(),
+      type: "browser_navigate",
+      filePath: "",
+      browserUrl: match[1].trim(),
+      url: match[1].trim(),
+      status: "pending",
+    });
+  }
+
+  // browser_snapshot — optional bounds
+  const browserSnapshotRegex = /@browser_snapshot(.*?)(?:\n|$)/g;
+  while ((match = browserSnapshotRegex.exec(text)) !== null) {
+    const rest = match[1] || "";
+    const bodyMatch = rest.match(/--max-body-chars\s+(\d+)/);
+    const elementsMatch = rest.match(/--max-elements\s+(\d+)/);
+    calls.push({
+      id: generateToolCallId(),
+      type: "browser_snapshot",
+      filePath: "",
+      browserMaxBodyChars: bodyMatch ? parseInt(bodyMatch[1], 10) : undefined,
+      browserMaxElements: elementsMatch ? parseInt(elementsMatch[1], 10) : undefined,
+      status: "pending",
+    });
+  }
+
+  // browser_click
+  const browserClickRegex = /@browser_click:\s*(\S+)(?:\n|$)/g;
+  while ((match = browserClickRegex.exec(text)) !== null) {
+    calls.push({
+      id: generateToolCallId(),
+      type: "browser_click",
+      filePath: "",
+      browserRef: match[1].trim(),
+      status: "pending",
+    });
+  }
+
+  // browser_type — either "<ref> <text>" or active focused element text
+  const browserTypeRegex = /@browser_type:\s*(.+?)(?:\n|$)/g;
+  while ((match = browserTypeRegex.exec(text)) !== null) {
+    const raw = match[1].trim();
+    const refMatch = raw.match(/^(\S+)\s+([\s\S]+)$/);
+    const firstToken = refMatch?.[1] || "";
+    const hasExplicitRef = /^\d+$/.test(firstToken) || /^ref[:=]/i.test(firstToken);
+    const browserRef = hasExplicitRef
+      ? firstToken.replace(/^ref[:=]/i, "")
+      : "";
+    const browserText = hasExplicitRef ? refMatch?.[2]?.trim() || "" : raw;
+    calls.push({
+      id: generateToolCallId(),
+      type: "browser_type",
+      filePath: "",
+      browserRef,
+      browserText,
+      status: "pending",
+    });
+  }
+
+  // browser_screenshot
+  const browserScreenshotRegex = /@browser_screenshot(.*?)(?:\n|$)/g;
+  while ((match = browserScreenshotRegex.exec(text)) !== null) {
+    calls.push({
+      id: generateToolCallId(),
+      type: "browser_screenshot",
+      filePath: "",
+      browserFullPage: /--full-page/.test(match[1] || ""),
+      status: "pending",
+    });
+  }
+
+  // browser_close
+  const browserCloseRegex = /@browser_close\s*(?:\n|$)/g;
+  while ((match = browserCloseRegex.exec(text)) !== null) {
+    calls.push({
+      id: generateToolCallId(),
+      type: "browser_close",
+      filePath: "",
+      status: "pending",
+    });
+  }
+
   // list_files
   const listRegex = /@list_files:\s*(.+?)(?:\n|$)/g;
   while ((match = listRegex.exec(text)) !== null) {
@@ -495,6 +697,17 @@ export function parseToolCalls(text: string): ToolCall[] {
   }
 
   return calls;
+}
+
+function parseJsonObjectArg(value: string): Record<string, unknown> | undefined {
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export function stripFabricatedResults(text: string): string {

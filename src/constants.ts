@@ -25,11 +25,13 @@ export const EXCLUDED_DIRS_GLOB = `**/{${EXCLUDED_DIRS.join(",")}}/**`;
 
 /** Tool types that are safe to auto-execute without user approval. */
 export const NON_DESTRUCTIVE_TOOL_TYPES: ReadonlySet<ToolCallType> = new Set([
-  "list_tools", "list_skills", "run_skill",
+  "list_tools", "list_skills", "run_skill", "skill_view", "skill_scan",
+  "mcp_list_resources", "mcp_list_resource_templates", "mcp_list_prompts",
   "diagnostics", "open_file", "open_definition", "workspace_symbols", "hover_symbol",
   "code_actions",
   "go_to_definition", "find_references", "document_symbols",
   "read_file", "web_search", "web_fetch", "list_files", "grep", "glob",
+  "browser_snapshot", "browser_screenshot",
   "git_status", "git_diff", "todo_write",
   "task",
   "memory_read",
@@ -119,49 +121,66 @@ You have access to tools for reading and modifying files in the user's workspace
 @run_skill: <skill_name>
 @run_skill: <skill_name> --prompt <how to apply it>
 
-4. **Read a file** — read contents with line numbers:
+4. **Inspect a skill's full instructions or support file**:
+@skill_view: <skill_name>
+@skill_view: <skill_name> --path <references/file.md>
+
+5. **Scan local skill candidates**:
+@skill_scan
+@skill_scan: <local_directory_or_skill_file>
+
+6. **Install a local skill candidate** (requires user approval):
+@skill_install: <candidate_skill_directory_or_file>
+@skill_install: <candidate_skill_directory_or_file> --name <desired_skill_id>
+
+7. **Manage installed workspace skills** (requires approval):
+@skill_manage: list
+@skill_manage: disable <skill_id>
+@skill_manage: enable <skill_id>
+
+8. **Read a file** — read contents with line numbers:
 @read_file: <file_path>
 
    With offset and limit (for large files):
 @read_file: <file_path> --offset <line_number> --limit <num_lines>
 
-5. **Inspect diagnostics** — read current VS Code errors and warnings:
+9. **Inspect diagnostics** — read current VS Code errors and warnings:
 @diagnostics
 @diagnostics: <file_path>
 
-6. **Open a file in the editor** — optionally reveal a specific line:
+10. **Open a file in the editor** — optionally reveal a specific line:
 @open_file: <file_path>
 @open_file: <file_path> --line <line_number>
 @open_file: <file_path> --line <line_number> --char <character_number>
 
-7. **Open a definition in the editor** — jump directly to the resolved definition:
+11. **Open a definition in the editor** — jump directly to the resolved definition:
 @open_definition: <file_path> --line <line_number> --char <character_number>
 
-8. **Search workspace symbols** — find matching functions, classes, variables, and methods:
+12. **Search workspace symbols** — find matching functions, classes, variables, and methods:
 @workspace_symbols: <query>
 
-9. **Read hover info for a symbol** — inspect docs and type information at a position:
+13. **Read hover info for a symbol** — inspect docs and type information at a position:
 @hover_symbol: <file_path> --line <line_number> --char <character_number>
 
-10. **List code actions** — inspect quick fixes and refactors available at a position:
+14. **List code actions** — inspect quick fixes and refactors available at a position:
 @code_actions: <file_path> --line <line_number> --char <character_number>
 
-11. **Apply a code action** — apply a specific quick fix or refactor by title:
+15. **Apply a code action** — apply a specific quick fix or refactor by title:
 @apply_code_action: <file_path> --line <line_number> --char <character_number> --title <action title>
 
-12. **Go to definition** — resolve the symbol under a cursor position:
+16. **Go to definition** — resolve the symbol under a cursor position:
 @go_to_definition: <file_path> --line <line_number> --char <character_number>
 
-13. **Find references** — locate usages of the symbol under a cursor position:
+17. **Find references** — locate usages of the symbol under a cursor position:
 @find_references: <file_path> --line <line_number> --char <character_number>
 
    Excluding the declaration:
 @find_references: <file_path> --line <line_number> --char <character_number> --exclude-declaration
 
-14. **List document symbols** — inspect top-level and nested symbols in a file:
+18. **List document symbols** — inspect top-level and nested symbols in a file:
 @document_symbols: <file_path>
 
-15. **Edit a file** — exact search-and-replace:
+19. **Edit a file** — exact search-and-replace:
 @edit_file: <file_path>
 <<<SEARCH
 exact text to find
@@ -177,22 +196,62 @@ text to find everywhere
 replacement text
 REPLACE>>>
 
-10. **Write a file** (create new or overwrite) — output:
+20. **Write a file** (create new or overwrite) — output:
 @write_file: <file_path>
 <<<CONTENT
 file content here
 CONTENT>>>
 
-11. **Web search** — search the web:
+21. **Web search** — search the web:
 @web_search: <search query>
 
-12. **Web fetch** — fetch a URL's content:
+22. **Web fetch** — fetch a URL's content:
 @web_fetch: <url>
 
-13. **List files in a directory**:
+23. **Local browser navigation** (requires approval unless in auto mode):
+@browser_navigate: <url>
+
+24. **Local browser snapshot** — inspect current URL, title, body text, and visible interactive elements:
+@browser_snapshot
+@browser_snapshot --max-elements 40 --max-body-chars 4000
+
+25. **Local browser click** (requires approval unless in auto mode):
+@browser_click: <ref_or_index_from_snapshot>
+
+26. **Local browser typing** (requires approval unless in auto mode):
+@browser_type: <ref_or_index_from_snapshot> <text>
+@browser_type: <text for active focused element>
+
+27. **Local browser screenshot** — save PNG to a temp file and return path/metadata:
+@browser_screenshot
+@browser_screenshot --full-page
+
+28. **Close local browser session** (requires approval unless in auto mode):
+@browser_close
+
+29. **List MCP resources**:
+@mcp_list_resources
+@mcp_list_resources: <server_name>
+
+30. **Read an MCP resource**:
+@mcp_read_resource: <server_name> <resource_uri>
+
+31. **List MCP resource templates**:
+@mcp_list_resource_templates
+@mcp_list_resource_templates: <server_name>
+
+32. **List MCP prompts**:
+@mcp_list_prompts
+@mcp_list_prompts: <server_name>
+
+33. **Get an MCP prompt**:
+@mcp_get_prompt: <server_name> <prompt_name>
+@mcp_get_prompt: <server_name> <prompt_name> --args {"name":"value"}
+
+34. **List files in a directory**:
 @list_files: <directory_path>
 
-14. **Run a shell command** (requires user approval):
+35. **Run a shell command** (requires user approval):
 @run_command: <shell command>
 
    Background mode:
@@ -202,51 +261,56 @@ CONTENT>>>
 @run_command: bg_status <task_id>
 @run_command: bg_cancel <task_id>
 
-15. **Search file contents** (grep across workspace):
+36. **Search file contents** (grep across workspace):
 @grep: <regex pattern>
 
    With options:
 @grep: <regex pattern> --glob <glob> --output content --context 3 -i
 
-16. **Find files by pattern** (glob):
+37. **Find files by pattern** (glob):
 @glob: <glob pattern>
 
    Scoped to a directory:
 @glob: <glob pattern> --path <directory>
 
-17. **Git status**:
+38. **Git status**:
 @git_status
 
-18. **Git diff**:
+39. **Git diff**:
 @git_diff
 
-19. **Git commit** (requires user approval):
+40. **Git commit** (requires user approval):
 @git_commit: <commit message>
 
-20. **Task tracking** (track multi-step work):
+41. **Task tracking** (track multi-step work):
 @todo_write: <task1> | <task2> | <task3>
 
-21. **Delegate focused investigation to a read-only subagent**:
+42. **Delegate focused investigation to a read-only subagent**:
 @task: <focused prompt>
 
    With an optional name:
 @task: reviewer | inspect the auth flow and report risks
 
-22. **Read memories** (recall from previous conversations):
+43. **Read memories** (recall from previous conversations):
 @memory_read
 @memory_read: <search query>
 
-23. **Save a memory** (persist across conversations):
+44. **Save a memory** (persist across conversations):
 @memory_write: <type> | <name> | <content>
    Types: user, feedback, project, reference
 
-24. **Delete a memory**:
+45. **Delete a memory**:
 @memory_delete: <name>
 
 ## Rules
 - These are the ONLY tools available. Do NOT invent tools that are not listed.
 - When the user asks what skills are available, use list_skills instead of answering from memory.
 - When the user asks to use a named skill, use list_skills to verify it and run_skill to activate it.
+- When exact skill instructions or support files matter, use skill_view after list_skills.
+- Before installing a local skill, use skill_scan and pass a reported candidate path to skill_install.
+- Use skill_manage list to inspect enabled and disabled installed workspace skills.
+- Use MCP resource and prompt tools only for content exposed by connected MCP servers; MCP prompts are returned as tool output, not activated as instructions.
+- Use browser_snapshot before browser_click or browser_type so element refs come from the current page. Browser screenshots return a temp PNG path, not raw image data. Use browser_close when finished with a managed browser session.
 - Do NOT claim a skill is available unless it appears in list_skills.
 - Always read a file before editing it.
 - Use edit_file for modifications, write_file only for new files or complete rewrites.

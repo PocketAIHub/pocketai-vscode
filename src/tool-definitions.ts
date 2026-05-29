@@ -86,6 +86,208 @@ export const TOOL_DEFINITIONS: OpenAITool[] = [
   {
     type: "function",
     function: {
+      name: "skill_view",
+      description:
+        "Reads a skill's full instructions or one of its listed support files. " +
+        "Use this after list_skills when you need the exact SKILL.md content, or when a workspace skill references a support file under references, templates, scripts, or assets. " +
+        "The optional path must be a relative support-file path shown by list_skills or skill_view.",
+      parameters: {
+        type: "object",
+        properties: {
+          name: {
+            type: "string",
+            description:
+              "The skill id to inspect. Use list_skills first if you do not know the id.",
+          },
+          path: {
+            type: "string",
+            description:
+              "Optional relative support-file path inside the skill directory, such as references/usage.md or scripts/helper.py. Omit to read the main SKILL.md.",
+          },
+        },
+        required: ["name"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "skill_scan",
+      description:
+        "Scans a local directory or skill file for installable PocketAI workspace skill candidates. " +
+        "Use this to inspect a local repo or folder before installing skills. " +
+        "It reports candidate ids, descriptions, support-file counts, metadata, source paths, and conflicts with installed workspace skills.",
+      parameters: {
+        type: "object",
+        properties: {
+          path: {
+            type: "string",
+            description:
+              "Optional local directory, SKILL.md file, or .md skill file to scan. Relative paths resolve within the current workspace. Omit to scan the current workspace and known ancestor skill roots.",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "skill_install",
+      description:
+        "Installs a local skill candidate into the workspace .pocketai/skills directory. " +
+        "Use skill_scan first, then pass the candidate SKILL.md path or skill directory. " +
+        "This copies SKILL.md and support directories references, templates, scripts, and assets. It refuses to overwrite existing installed skills.",
+      parameters: {
+        type: "object",
+        properties: {
+          path: {
+            type: "string",
+            description:
+              "Local candidate skill directory, SKILL.md file, or .md skill file to install.",
+          },
+          name: {
+            type: "string",
+            description:
+              "Optional desired install id. If omitted, the skill frontmatter name or source path name is used.",
+          },
+        },
+        required: ["path"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "skill_manage",
+      description:
+        "Manages installed workspace skills. Use action list to inspect enabled and disabled skills, disable to hide an installed workspace skill from list_skills/run_skill, or enable to restore it. " +
+        "This does not remove skills and cannot manage built-in skills.",
+      parameters: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+            enum: ["list", "enable", "disable"],
+            description:
+              "Management action. list reports installed workspace skills; enable removes the disabled marker; disable writes a disabled marker.",
+          },
+          name: {
+            type: "string",
+            description:
+              "Installed workspace skill id for enable or disable. Omit for list.",
+          },
+        },
+        required: ["action"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "mcp_list_resources",
+      description:
+        "Lists resources exposed by connected MCP servers over the configured stdio MCP transport. " +
+        "Optionally filter to one server.",
+      parameters: {
+        type: "object",
+        properties: {
+          server: {
+            type: "string",
+            description: "Optional MCP server name to list resources from.",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "mcp_read_resource",
+      description:
+        "Reads a resource from a connected MCP server over stdio. The result is returned as tool output only and includes provenance and MIME metadata where available.",
+      parameters: {
+        type: "object",
+        properties: {
+          server: {
+            type: "string",
+            description: "MCP server name.",
+          },
+          uri: {
+            type: "string",
+            description: "Resource URI reported by mcp_list_resources.",
+          },
+        },
+        required: ["server", "uri"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "mcp_list_resource_templates",
+      description:
+        "Lists resource templates exposed by connected MCP servers over the configured stdio MCP transport. " +
+        "Optionally filter to one server.",
+      parameters: {
+        type: "object",
+        properties: {
+          server: {
+            type: "string",
+            description: "Optional MCP server name to list resource templates from.",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "mcp_list_prompts",
+      description:
+        "Lists prompts exposed by connected MCP servers over the configured stdio MCP transport. " +
+        "Optionally filter to one server.",
+      parameters: {
+        type: "object",
+        properties: {
+          server: {
+            type: "string",
+            description: "Optional MCP server name to list prompts from.",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "mcp_get_prompt",
+      description:
+        "Gets a prompt from a connected MCP server over stdio. The prompt is returned as tool output only and is not activated as system or developer instructions.",
+      parameters: {
+        type: "object",
+        properties: {
+          server: {
+            type: "string",
+            description: "MCP server name.",
+          },
+          name: {
+            type: "string",
+            description: "Prompt name reported by mcp_list_prompts.",
+          },
+          arguments: {
+            type: "object",
+            description:
+              "Optional prompt arguments keyed by argument name.",
+            additionalProperties: true,
+          },
+        },
+        required: ["server", "name"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "diagnostics",
       description:
         "Reads current VS Code diagnostics (errors and warnings) for the workspace or a single file. " +
@@ -683,6 +885,130 @@ export const TOOL_DEFINITIONS: OpenAITool[] = [
           },
         },
         required: ["url"],
+      },
+    },
+  },
+
+  /* ------------------------------------------------------------------ */
+  /*  Local Browser Automation                                           */
+  /* ------------------------------------------------------------------ */
+  {
+    type: "function",
+    function: {
+      name: "browser_navigate",
+      description:
+        "Open or navigate a local Chromium-family browser through Chrome DevTools Protocol. " +
+        "Creates or connects to a local browser session, then navigates the current page to the URL. " +
+        "This can trigger page loads and web app side effects, so it requires approval unless in auto mode. " +
+        "Use browser_snapshot after navigation to inspect the page.",
+      parameters: {
+        type: "object",
+        properties: {
+          url: {
+            type: "string",
+            description:
+              "URL to open. http, https, file, and about URLs are supported. Bare hostnames are treated as http URLs.",
+          },
+        },
+        required: ["url"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "browser_snapshot",
+      description:
+        "Inspect the current local browser page. Returns current URL, title, bounded visible body text, and indexed visible interactive elements. " +
+        "Use the returned element index/ref with browser_click or browser_type.",
+      parameters: {
+        type: "object",
+        properties: {
+          max_body_chars: {
+            type: "number",
+            description:
+              "Optional maximum body text characters to return. Bounded internally.",
+          },
+          max_elements: {
+            type: "number",
+            description:
+              "Optional maximum number of visible interactive elements to return. Bounded internally.",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "browser_click",
+      description:
+        "Click an indexed element from the latest browser_snapshot. " +
+        "This can trigger navigation, form submission, or other page side effects, so it requires approval unless in auto mode.",
+      parameters: {
+        type: "object",
+        properties: {
+          ref: {
+            type: "string",
+            description:
+              "Element ref or 1-based index from the latest browser_snapshot.",
+          },
+        },
+        required: ["ref"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "browser_type",
+      description:
+        "Type text into an indexed element from the latest browser_snapshot, or into the active focused browser element when ref is omitted. " +
+        "This can submit data or modify page state, so it requires approval unless in auto mode.",
+      parameters: {
+        type: "object",
+        properties: {
+          ref: {
+            type: "string",
+            description:
+              "Optional element ref or 1-based index from the latest browser_snapshot. Omit to type into the active focused element.",
+          },
+          text: {
+            type: "string",
+            description: "Text to insert into the focused/editable browser element.",
+          },
+        },
+        required: ["text"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "browser_screenshot",
+      description:
+        "Capture a PNG screenshot of the current local browser page. Saves the PNG to a temp file and returns the file path and metadata, never raw base64.",
+      parameters: {
+        type: "object",
+        properties: {
+          full_page: {
+            type: "boolean",
+            description:
+              "Capture beyond the current viewport when Chromium supports it. Defaults to false.",
+          },
+        },
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "browser_close",
+      description:
+        "Close a PocketAI-managed local browser session, or disconnect from a configured/existing CDP browser session.",
+      parameters: {
+        type: "object",
+        properties: {},
       },
     },
   },

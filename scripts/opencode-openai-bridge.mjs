@@ -23,22 +23,35 @@ const BRIDGE_INFO = {
   version: "0.1.0",
 };
 
+const OPENCODE_GO_MODELS = [
+  ["glm-5", "GLM 5"],
+  ["glm-5.1", "GLM 5.1"],
+  ["kimi-k2.5", "Kimi K2.5"],
+  ["kimi-k2.6", "Kimi K2.6"],
+  ["deepseek-v4-pro", "DeepSeek V4 Pro"],
+  ["deepseek-v4-flash", "DeepSeek V4 Flash"],
+  ["mimo-v2.5", "MiMo V2.5"],
+  ["mimo-v2.5-pro", "MiMo V2.5 Pro"],
+  ["mimo-v2-pro", "MiMo V2 Pro"],
+  ["mimo-v2-omni", "MiMo V2 Omni"],
+  ["minimax-m2.5", "MiniMax M2.5"],
+  ["minimax-m2.7", "MiniMax M2.7"],
+  ["qwen3.5-plus", "Qwen3.5 Plus"],
+  ["qwen3.6-plus", "Qwen3.6 Plus"],
+  ["hy3-preview", "HY3 Preview"],
+];
+
 const MODEL_DEFINITIONS = [
   {
     id: "auto",
     display_name: "OpenCode default",
     description: "Use the default model configured in OpenCode.",
   },
-  {
-    id: "opencode-go/glm-5.1",
-    display_name: "OpenCode Go GLM 5.1",
+  ...OPENCODE_GO_MODELS.map(([id, displayName]) => ({
+    id: `opencode-go/${id}`,
+    display_name: `OpenCode Go ${displayName}`,
     description: "OpenCode Go model via OpenCode's provider/model syntax.",
-  },
-  {
-    id: "opencode-go/kimi-k2.5",
-    display_name: "OpenCode Go Kimi K2.5",
-    description: "OpenCode Go model via OpenCode's provider/model syntax.",
-  },
+  })),
   {
     id: "anthropic/claude-sonnet-4-5",
     display_name: "Anthropic Claude Sonnet 4.5",

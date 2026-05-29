@@ -294,9 +294,28 @@ function normalizeRateLimit(limit, id) {
   const usedPercent = toNumber(
     firstDefined(limit.usedPercent, limit.used_percent, limit.used_percentage),
   );
-  const windowMinutes = toNumber(firstDefined(limit.windowMinutes, limit.window_minutes));
-  const resetsAtUnix = toNumber(firstDefined(limit.resetsAtUnix, limit.resets_at));
-  const resetsAt = toResetIso(firstDefined(limit.resetsAt, limit.resets_at));
+  const windowMinutes = toNumber(
+    firstDefined(
+      limit.windowMinutes,
+      limit.window_minutes,
+      limit.windowDurationMins,
+      limit.window_duration_mins,
+    ),
+  );
+  const resetsAtUnix = toNumber(
+    firstDefined(
+      limit.resetsAtUnix,
+      limit.resets_at,
+      typeof limit.resetsAt === "number" ? limit.resetsAt : undefined,
+    ),
+  );
+  const resetsAt = toResetIso(
+    firstDefined(
+      typeof limit.resetsAt === "string" ? limit.resetsAt : undefined,
+      limit.resets_at,
+      resetsAtUnix,
+    ),
+  );
 
   if (usedPercent === undefined && windowMinutes === undefined && !resetsAt) {
     return undefined;
@@ -481,9 +500,44 @@ function updateLatestCodexUsageFromNotification(params) {
   }
 }
 
-function getCodexUsagePayload() {
+async function fetchLiveCodexRateLimits() {
+  try {
+    const result = await withRpcClient((client) =>
+      client.request("account/rateLimits/read", {}),
+    );
+    const rateLimits = result?.rateLimits || result?.rate_limits;
+    if (!rateLimits || typeof rateLimits !== "object") {
+      return undefined;
+    }
+    return buildCodexUsageSnapshot({
+      source: "codex-account-rate-limits",
+      rateLimits,
+      updatedAt: new Date().toISOString(),
+    });
+  } catch (error) {
+    if (VERBOSE) {
+      logError(
+        "Failed to fetch live Codex rate limits:",
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+    return undefined;
+  }
+}
+
+async function getCodexUsagePayload(force = false) {
   const logSnapshot = readLatestCodexUsageFromLogs();
-  const snapshot = mergeCodexUsageSnapshots(latestCodexUsage, logSnapshot);
+  let liveSnapshot;
+  if (force) {
+    liveSnapshot = await fetchLiveCodexRateLimits();
+    if (liveSnapshot) {
+      latestCodexUsage = mergeCodexUsageSnapshots(liveSnapshot, latestCodexUsage);
+    }
+  }
+  const snapshot = mergeCodexUsageSnapshots(
+    force && liveSnapshot ? liveSnapshot : latestCodexUsage,
+    logSnapshot,
+  );
   if (!snapshot) {
     return {
       ok: false,
@@ -772,8 +826,13 @@ async function handleStatus(res) {
   });
 }
 
-async function handleUsage(res) {
-  sendJson(res, 200, getCodexUsagePayload());
+function usageRequestForce(req) {
+  const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
+  return url.searchParams.get("force") === "1" || url.searchParams.get("refresh") === "1";
+}
+
+async function handleUsage(req, res) {
+  sendJson(res, 200, await getCodexUsagePayload(usageRequestForce(req)));
 }
 
 async function handleChatCompletions(req, res) {
@@ -1056,7 +1115,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "GET" && url.pathname === "/usage") {
-      await handleUsage(res);
+      await handleUsage(req, res);
       return;
     }
 

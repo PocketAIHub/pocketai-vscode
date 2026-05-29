@@ -82,6 +82,10 @@ const STRUCTURED_TOOL_INSTRUCTIONS = `You have tools available via function call
 # Tool Selection
 - If the user asks what skills are available, call list_skills instead of answering from memory.
 - If the user asks to use a named skill, call list_skills to verify it and run_skill to activate it.
+- Use skill_view to inspect a skill's full instructions or listed support files when the exact skill content matters.
+- Use skill_scan before skill_install when installing a local workspace skill. skill_install writes files and must use a candidate path from local disk.
+- Use skill_manage list to inspect installed workspace skills, and skill_manage enable/disable to toggle installed workspace skills.
+- Use mcp_list_resources/mcp_read_resource and mcp_list_prompts/mcp_get_prompt for MCP resources and prompts exposed by connected stdio MCP servers.
 - Do not claim a skill is available unless it appears in list_skills.
 - To find files by name or extension, use glob. To search file contents, use grep.
 - To read a file, use read_file — never run_command with cat/head/tail.
@@ -92,6 +96,7 @@ const STRUCTURED_TOOL_INSTRUCTIONS = `You have tools available via function call
 - To inspect available quick fixes or refactors at a location, use code_actions.
 - To apply one of those editor actions directly, use apply_code_action with the exact title.
 - To delegate focused independent work, use task with a narrow prompt and expected report shape. Subagents are read-only by default; use write mode only with explicit allowed_paths ownership.
+- To inspect or interact with a local web app in Chromium, use browser_navigate, then browser_snapshot. Use browser_click/browser_type only with refs from the latest snapshot. browser_screenshot returns a temp PNG path and metadata, not raw base64.
 - To modify a file, use edit_file — never run_command with sed/awk.
 - To create a new file, use write_file — never run_command with echo/cat redirection.
 - Use run_command only for shell operations that have no dedicated tool (builds, installs, test runners, etc.).
@@ -687,6 +692,37 @@ function createToolCallFromFunction(
       tc.skillName = args.name;
       tc.skillPrompt = args.prompt;
       break;
+    case "skill_view":
+      tc.skillName = args.name;
+      if (args.path) tc.filePath = args.path;
+      break;
+    case "skill_scan":
+      if (args.path) tc.filePath = args.path;
+      break;
+    case "skill_install":
+      if (args.path) tc.filePath = args.path;
+      tc.skillName = args.name;
+      break;
+    case "skill_manage":
+      tc.skillManageAction = args.action;
+      tc.skillName = args.name;
+      break;
+    case "mcp_list_resources":
+    case "mcp_list_resource_templates":
+    case "mcp_list_prompts":
+      tc.mcpServerName = args.server;
+      break;
+    case "mcp_read_resource":
+      tc.mcpServerName = args.server;
+      tc.mcpResourceUri = args.uri;
+      break;
+    case "mcp_get_prompt":
+      tc.mcpServerName = args.server;
+      tc.mcpPromptName = args.name;
+      if (args.arguments && typeof args.arguments === "object") {
+        tc.mcpArguments = args.arguments;
+      }
+      break;
     case "diagnostics":
       if (args.path) tc.filePath = args.path;
       break;
@@ -744,6 +780,32 @@ function createToolCallFromFunction(
       break;
     case "web_fetch":
       tc.url = args.url;
+      break;
+    case "browser_navigate":
+      tc.browserUrl = args.url;
+      tc.url = args.url;
+      break;
+    case "browser_snapshot":
+      if (args.max_body_chars !== undefined) {
+        tc.browserMaxBodyChars = Number(args.max_body_chars);
+      }
+      if (args.max_elements !== undefined) {
+        tc.browserMaxElements = Number(args.max_elements);
+      }
+      break;
+    case "browser_click":
+      tc.browserRef = args.ref;
+      break;
+    case "browser_type":
+      tc.browserRef = args.ref;
+      tc.browserText = args.text;
+      break;
+    case "browser_screenshot":
+      if (args.full_page !== undefined) {
+        tc.browserFullPage = Boolean(args.full_page);
+      }
+      break;
+    case "browser_close":
       break;
     case "run_command":
       tc.command = args.command;
@@ -845,6 +907,42 @@ function buildStreamingToolHint(
         toolTarget: toolCall.url || "",
         detail: "",
       };
+    case "browser_navigate":
+      return {
+        toolName: "browser_navigate",
+        toolTarget: toolCall.browserUrl || toolCall.url || "",
+        detail: "",
+      };
+    case "browser_snapshot":
+      return {
+        toolName: "browser_snapshot",
+        toolTarget: "current page",
+        detail: "",
+      };
+    case "browser_click":
+      return {
+        toolName: "browser_click",
+        toolTarget: toolCall.browserRef || "",
+        detail: "",
+      };
+    case "browser_type":
+      return {
+        toolName: "browser_type",
+        toolTarget: toolCall.browserRef || "active element",
+        detail: toolCall.browserText || "",
+      };
+    case "browser_screenshot":
+      return {
+        toolName: "browser_screenshot",
+        toolTarget: "current page",
+        detail: "",
+      };
+    case "browser_close":
+      return {
+        toolName: "browser_close",
+        toolTarget: "browser session",
+        detail: "",
+      };
     case "grep":
       return {
         toolName: "grep",
@@ -898,6 +996,50 @@ function buildStreamingToolHint(
         toolName: "run_skill",
         toolTarget: toolCall.skillName || "",
         detail: "",
+      };
+    case "skill_view":
+      return {
+        toolName: "skill_view",
+        toolTarget: toolCall.skillName || "",
+        detail: toolCall.filePath || "",
+      };
+    case "skill_scan":
+      return {
+        toolName: "skill_scan",
+        toolTarget: toolCall.filePath || "workspace",
+        detail: "",
+      };
+    case "skill_install":
+      return {
+        toolName: "skill_install",
+        toolTarget: toolCall.skillName || toolCall.filePath || "skill",
+        detail: toolCall.filePath || "",
+      };
+    case "skill_manage":
+      return {
+        toolName: "skill_manage",
+        toolTarget: toolCall.skillManageAction || "list",
+        detail: toolCall.skillName || "",
+      };
+    case "mcp_list_resources":
+    case "mcp_list_resource_templates":
+    case "mcp_list_prompts":
+      return {
+        toolName: toolCall.type,
+        toolTarget: toolCall.mcpServerName || "MCP servers",
+        detail: "",
+      };
+    case "mcp_read_resource":
+      return {
+        toolName: "mcp_read_resource",
+        toolTarget: toolCall.mcpResourceUri || "resource",
+        detail: toolCall.mcpServerName || "",
+      };
+    case "mcp_get_prompt":
+      return {
+        toolName: "mcp_get_prompt",
+        toolTarget: toolCall.mcpPromptName || "prompt",
+        detail: toolCall.mcpServerName || "",
       };
     case "todo_write":
       return {

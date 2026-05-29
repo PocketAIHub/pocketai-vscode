@@ -204,6 +204,21 @@
           "default": true,
           "description": "Run shell commands in VS Code's integrated terminal instead of a background process. Gives visibility into command execution and preserves shell state."
         },
+        "pocketai.browserCdpEndpoint": {
+          "type": "string",
+          "default": "",
+          "description": "Optional Chrome DevTools Protocol endpoint for browser tools, e.g. http://127.0.0.1:9222. When empty, PocketAI tries 127.0.0.1:9222 and then launches a local Chromium-family browser on a random port."
+        },
+        "pocketai.browserExecutablePath": {
+          "type": "string",
+          "default": "",
+          "description": "Optional absolute path to a Chromium-family browser executable for browser tools."
+        },
+        "pocketai.browserHeadless": {
+          "type": "boolean",
+          "default": false,
+          "description": "Launch PocketAI-managed Chromium browser sessions in headless mode."
+        },
         "pocketai.mcpServers": {
           "type": "array",
           "default": [],

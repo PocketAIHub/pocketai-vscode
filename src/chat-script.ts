@@ -817,6 +817,18 @@ export function getChatScript(brandIconUri: string): string {
               codeTarget: false,
             };
           }
+        case "browser_navigate":
+          return { verb: "Navigate", target: tc.browserUrl || tc.url || "browser", secondary: "", codeTarget: false };
+        case "browser_snapshot":
+          return { verb: "Inspect", target: "browser page", secondary: "", codeTarget: false };
+        case "browser_click":
+          return { verb: "Click", target: tc.browserRef || "browser element", secondary: "", codeTarget: false };
+        case "browser_type":
+          return { verb: "Type", target: tc.browserRef || "active element", secondary: tc.browserText || "", codeTarget: false };
+        case "browser_screenshot":
+          return { verb: "Capture", target: "browser screenshot", secondary: tc.browserFullPage ? "full page" : "viewport", codeTarget: false };
+        case "browser_close":
+          return { verb: "Close", target: "browser session", secondary: "", codeTarget: false };
         case "run_command":
           return { verb: "Run", target: tc.command || "command", secondary: "", codeTarget: true };
         case "grep":
@@ -836,6 +848,24 @@ export function getChatScript(brandIconUri: string): string {
           return { verb: "Inspect", target: "skills", secondary: "", codeTarget: false };
         case "run_skill":
           return { verb: "Use", target: tc.skillName || "skill", secondary: "", codeTarget: false };
+        case "skill_view":
+          return { verb: "Read", target: tc.skillName || "skill", secondary: tc.filePath || "", codeTarget: false };
+        case "skill_scan":
+          return { verb: "Scan", target: tc.filePath || "skills", secondary: "", codeTarget: false };
+        case "skill_install":
+          return { verb: "Install", target: tc.skillName || tc.filePath || "skill", secondary: tc.filePath || "", codeTarget: false };
+        case "skill_manage":
+          return { verb: "Manage", target: tc.skillName || tc.skillManageAction || "skills", secondary: "", codeTarget: false };
+        case "mcp_list_resources":
+          return { verb: "List", target: tc.mcpServerName || "MCP resources", secondary: "", codeTarget: false };
+        case "mcp_read_resource":
+          return { verb: "Read", target: tc.mcpResourceUri || "MCP resource", secondary: tc.mcpServerName || "", codeTarget: false };
+        case "mcp_list_resource_templates":
+          return { verb: "List", target: tc.mcpServerName || "MCP templates", secondary: "", codeTarget: false };
+        case "mcp_list_prompts":
+          return { verb: "List", target: tc.mcpServerName || "MCP prompts", secondary: "", codeTarget: false };
+        case "mcp_get_prompt":
+          return { verb: "Get", target: tc.mcpPromptName || "MCP prompt", secondary: tc.mcpServerName || "", codeTarget: false };
         case "todo_write":
           return { verb: "Update", target: "task list", secondary: "", codeTarget: false };
         case "task":
@@ -1167,6 +1197,23 @@ export function getChatScript(brandIconUri: string): string {
         if (toolCall.type === "list_tools") return toolCall.query || "List tools";
         if (toolCall.type === "list_skills") return toolCall.query || "List skills";
         if (toolCall.type === "run_skill") return toolCall.skillName || "Run skill";
+        if (toolCall.type === "skill_view") return toolCall.skillName || "View skill";
+        if (toolCall.type === "skill_scan") return toolCall.filePath || "Scan skills";
+        if (toolCall.type === "skill_install") return toolCall.skillName || toolCall.filePath || "Install skill";
+        if (toolCall.type === "skill_manage") return toolCall.skillName || toolCall.skillManageAction || "Manage skills";
+        if (toolCall.type === "browser_navigate") return toolCall.browserUrl || toolCall.url || "Navigate browser";
+        if (toolCall.type === "browser_snapshot") return "Inspect browser";
+        if (toolCall.type === "browser_click") return toolCall.browserRef || "Click browser element";
+        if (toolCall.type === "browser_type") {
+          return [toolCall.browserRef || "active", toolCall.browserText || ""].filter(Boolean).join(" ") || "Type in browser";
+        }
+        if (toolCall.type === "browser_screenshot") return toolCall.browserFullPage ? "Full page screenshot" : "Browser screenshot";
+        if (toolCall.type === "browser_close") return "Close browser session";
+        if (toolCall.type === "mcp_list_resources") return toolCall.mcpServerName || "List MCP resources";
+        if (toolCall.type === "mcp_read_resource") return toolCall.mcpResourceUri || "Read MCP resource";
+        if (toolCall.type === "mcp_list_resource_templates") return toolCall.mcpServerName || "List MCP templates";
+        if (toolCall.type === "mcp_list_prompts") return toolCall.mcpServerName || "List MCP prompts";
+        if (toolCall.type === "mcp_get_prompt") return toolCall.mcpPromptName || "Get MCP prompt";
         if (toolCall.type === "diagnostics") return toolCall.filePath || "Inspect diagnostics";
         if (toolCall.type === "find_references" || toolCall.type === "go_to_definition" || toolCall.type === "document_symbols" || toolCall.type === "workspace_symbols" || toolCall.type === "hover_symbol" || toolCall.type === "code_actions" || toolCall.type === "apply_code_action" || toolCall.type === "open_file" || toolCall.type === "open_definition") {
           return toolCall.filePath || "Inspect code";
@@ -2709,7 +2756,8 @@ export function getChatScript(brandIconUri: string): string {
         normalized.includes("resolve") ||
         normalized.includes("apply") ||
         normalized.includes("update") ||
-        normalized.includes("commit")
+        normalized.includes("commit") ||
+        normalized.includes("browser")
       ) {
         return "tool";
       }
@@ -2734,6 +2782,18 @@ export function getChatScript(brandIconUri: string): string {
           return { label: "Searching the web...", detail: target || "Looking up information." };
         case "web_fetch":
           return { label: "Fetching page...", detail: target || "Loading a page." };
+        case "browser_navigate":
+          return { label: "Browser navigating...", detail: target || "Opening a page." };
+        case "browser_snapshot":
+          return { label: "Browser snapshot...", detail: target || "Inspecting the current page." };
+        case "browser_click":
+          return { label: "Browser clicking...", detail: target || "Clicking an element." };
+        case "browser_type":
+          return { label: "Browser typing...", detail: [target, extra].filter(Boolean).join(" · ") || "Typing into the page." };
+        case "browser_screenshot":
+          return { label: "Browser screenshot...", detail: target || "Capturing the current page." };
+        case "browser_close":
+          return { label: "Closing browser...", detail: target || "Closing the current browser session." };
         case "grep":
           return { label: "Searching code...", detail: [target, extra].filter(Boolean).join(" · ") || "Searching the repo." };
         case "glob":
@@ -2745,6 +2805,22 @@ export function getChatScript(brandIconUri: string): string {
           return { label: "Inspecting skills...", detail: "Checking which skills are available." };
         case "run_skill":
           return { label: "Activating skill...", detail: target || "Preparing a skill-guided response." };
+        case "skill_view":
+          return { label: "Reading skill...", detail: [target, extra].filter(Boolean).join(" · ") || "Loading skill instructions." };
+        case "skill_scan":
+          return { label: "Scanning skills...", detail: target || "Looking for local skill candidates." };
+        case "skill_install":
+          return { label: "Installing skill...", detail: [target, extra].filter(Boolean).join(" · ") || "Copying skill files." };
+        case "skill_manage":
+          return { label: "Managing skill...", detail: target || "Updating installed skill state." };
+        case "mcp_list_resources":
+        case "mcp_list_resource_templates":
+        case "mcp_list_prompts":
+          return { label: "Listing MCP...", detail: target || "Reading MCP server index." };
+        case "mcp_read_resource":
+          return { label: "Reading MCP resource...", detail: [target, extra].filter(Boolean).join(" · ") || "Fetching MCP resource content." };
+        case "mcp_get_prompt":
+          return { label: "Getting MCP prompt...", detail: [target, extra].filter(Boolean).join(" · ") || "Fetching MCP prompt content." };
         case "diagnostics":
           return { label: "Inspecting diagnostics...", detail: target || extra || "Checking current issues." };
         case "go_to_definition":
@@ -2790,12 +2866,28 @@ export function getChatScript(brandIconUri: string): string {
         { re: /^@list_tools(?::\s*(.+))?$/i, toolName: "list_tools", targetGroup: 1 },
         { re: /^@list_skills(?::\s*(.+))?$/i, toolName: "list_skills", targetGroup: 1 },
         { re: /^@run_skill:\s*(.+)$/i, toolName: "run_skill", targetGroup: 1 },
+        { re: /^@skill_view:\s*(.+)$/i, toolName: "skill_view", targetGroup: 1 },
+        { re: /^@skill_scan(?::\s*(.+))?$/i, toolName: "skill_scan", targetGroup: 1 },
+        { re: /^@skill_install:\s*(.+)$/i, toolName: "skill_install", targetGroup: 1 },
+        { re: /^@skill_manage:\s*(.+)$/i, toolName: "skill_manage", targetGroup: 1 },
+        { re: /^@mcp_list_resources(?::\s*(.+))?$/i, toolName: "mcp_list_resources", targetGroup: 1 },
+        { re: /^@mcp_read_resource:\s*(.+)$/i, toolName: "mcp_read_resource", targetGroup: 1 },
+        { re: /^@mcp_list_resource_templates(?::\s*(.+))?$/i, toolName: "mcp_list_resource_templates", targetGroup: 1 },
+        { re: /^@mcp_list_prompts(?::\s*(.+))?$/i, toolName: "mcp_list_prompts", targetGroup: 1 },
+        { re: /^@mcp_get_prompt:\s*(.+)$/i, toolName: "mcp_get_prompt", targetGroup: 1 },
         { re: /^@diagnostics(?::\s*(.+))?$/i, toolName: "diagnostics", targetGroup: 1 },
         { re: /^@go_to_definition:\s*(.+)$/i, toolName: "go_to_definition", targetGroup: 1 },
         { re: /^@find_references:\s*(.+)$/i, toolName: "find_references", targetGroup: 1 },
         { re: /^@document_symbols:\s*(.+)$/i, toolName: "document_symbols", targetGroup: 1 },
         { re: /^@read_file:\s*(.+)$/i, toolName: "read_file", targetGroup: 1 },
         { re: /^@web_search:\s*(.+)$/i, toolName: "web_search", targetGroup: 1 },
+        { re: /^@web_fetch:\s*(.+)$/i, toolName: "web_fetch", targetGroup: 1 },
+        { re: /^@browser_navigate:\s*(.+)$/i, toolName: "browser_navigate", targetGroup: 1 },
+        { re: /^@browser_snapshot(?:\s+.*)?$/i, toolName: "browser_snapshot", targetGroup: 0 },
+        { re: /^@browser_click:\s*(.+)$/i, toolName: "browser_click", targetGroup: 1 },
+        { re: /^@browser_type:\s*(.+)$/i, toolName: "browser_type", targetGroup: 1 },
+        { re: /^@browser_screenshot(?:\s+.*)?$/i, toolName: "browser_screenshot", targetGroup: 0 },
+        { re: /^@browser_close\s*$/i, toolName: "browser_close", targetGroup: 0 },
         { re: /^@list_files:\s*(.+)$/i, toolName: "list_files", targetGroup: 1 },
         { re: /^@run_command:\s*(.+)$/i, toolName: "run_command", targetGroup: 1 },
         { re: /^@grep:\s*(.+)$/i, toolName: "grep", targetGroup: 1 },

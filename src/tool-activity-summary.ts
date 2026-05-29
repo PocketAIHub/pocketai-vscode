@@ -19,6 +19,7 @@ type ToolActionKind =
   | "subagent"
   | "memory"
   | "skill"
+  | "browser"
   | "tool";
 
 type ToolActionDescription = AssistantToolActionSummaryItem & {
@@ -81,6 +82,8 @@ function describeToolAction(toolCall: ToolCall): ToolActionDescription {
     toolCall.query ||
     toolCall.command ||
     toolCall.url ||
+    toolCall.browserUrl ||
+    toolCall.browserRef ||
     toolCall.skillName ||
     toolCall.memoryName ||
     toolCall.memoryType ||
@@ -116,6 +119,39 @@ function describeToolAction(toolCall: ToolCall): ToolActionDescription {
       return action(toolCall, "search", "Searching web", toolCall.query || "web", "", 70);
     case "web_fetch":
       return action(toolCall, "fetch", "Fetching page", compactUrl(toolCall.url || "") || "page", toolCall.url || "", 68);
+    case "browser_navigate":
+      return action(
+        toolCall,
+        "browser",
+        "Navigating browser",
+        compactUrl(toolCall.browserUrl || toolCall.url || "") || "page",
+        toolCall.browserUrl || toolCall.url || "",
+        78,
+      );
+    case "browser_snapshot":
+      return action(toolCall, "browser", "Inspecting browser", "current page", "", 56);
+    case "browser_click":
+      return action(
+        toolCall,
+        "browser",
+        "Clicking browser",
+        toolCall.browserRef || "element",
+        "",
+        82,
+      );
+    case "browser_type":
+      return action(
+        toolCall,
+        "browser",
+        "Typing in browser",
+        toolCall.browserRef || "active element",
+        truncateSentence(toolCall.browserText || "", 120),
+        82,
+      );
+    case "browser_screenshot":
+      return action(toolCall, "browser", "Capturing browser", "current page", "", 56);
+    case "browser_close":
+      return action(toolCall, "browser", "Closing browser", "browser session", "", 56);
     case "grep":
       return action(toolCall, "search", "Searching code", toolCall.pattern || "code", toolCall.glob || fileTarget.secondary, 65);
     case "workspace_symbols":
@@ -167,6 +203,24 @@ function describeToolAction(toolCall: ToolCall): ToolActionDescription {
       return action(toolCall, "skill", "Inspecting skills", "skill registry", "", 39);
     case "run_skill":
       return action(toolCall, "skill", "Using skill", toolCall.skillName || "skill", "", 76);
+    case "skill_view":
+      return action(toolCall, "skill", "Reading skill", toolCall.skillName || "skill", toolCall.filePath || "", 39);
+    case "skill_scan":
+      return action(toolCall, "skill", "Scanning skills", toolCall.filePath || "workspace", "", 39);
+    case "skill_install":
+      return action(toolCall, "skill", "Installing skill", toolCall.skillName || toolCall.filePath || "skill", toolCall.filePath || "", 77);
+    case "skill_manage":
+      return action(toolCall, "skill", "Managing skill", toolCall.skillName || toolCall.skillManageAction || "skills", "", 72);
+    case "mcp_list_resources":
+      return action(toolCall, "fetch", "Listing MCP resources", toolCall.mcpServerName || "MCP servers", "", 43);
+    case "mcp_read_resource":
+      return action(toolCall, "fetch", "Reading MCP resource", toolCall.mcpResourceUri || "resource", toolCall.mcpServerName || "", 62);
+    case "mcp_list_resource_templates":
+      return action(toolCall, "fetch", "Listing MCP templates", toolCall.mcpServerName || "MCP servers", "", 43);
+    case "mcp_list_prompts":
+      return action(toolCall, "fetch", "Listing MCP prompts", toolCall.mcpServerName || "MCP servers", "", 43);
+    case "mcp_get_prompt":
+      return action(toolCall, "fetch", "Getting MCP prompt", toolCall.mcpPromptName || "prompt", toolCall.mcpServerName || "", 62);
     case "memory_read":
       return action(toolCall, "memory", "Reading memory", toolCall.memoryQuery || toolCall.memoryType || "memory", "", 42);
     case "memory_write":
@@ -244,6 +298,8 @@ function buildSummaryLabel(
         return "Using memory";
       case "skill":
         return "Using skills";
+      case "browser":
+        return "Using browser";
       default:
         return "Using tools";
     }
@@ -316,6 +372,8 @@ function defaultMetaForKind(kind: ToolActionKind): string {
       return "Using saved project memory.";
     case "skill":
       return "Preparing skill-guided context.";
+    case "browser":
+      return "Inspecting or interacting with the local browser.";
     default:
       return "Gathering context before continuing.";
   }

@@ -1,5 +1,8 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 
 const {
   detectSkillPromptIntent,
@@ -179,6 +182,25 @@ const {
   normalizeHttpExternalUrl,
 } = require("../dist/external-links.js");
 const {
+  formatMcpPromptGet,
+  formatMcpResourceRead,
+} = require("../dist/mcp-format.js");
+const {
+  discoverWorkspaceSkillFiles,
+  findWorkspaceSkillRoots,
+  installWorkspaceSkillFromPath,
+  isWorkspaceSkillDisabled,
+  listManagedWorkspaceSkills,
+  manageWorkspaceSkill,
+  normalizeSkillRelativePath,
+  parseWorkspaceSkill,
+  readWorkspaceSkillSupportFiles,
+  scanWorkspaceSkillCandidates,
+} = require("../dist/harness/skills/workspace.js");
+const {
+  TOOL_DEFINITIONS,
+} = require("../dist/tool-definitions.js");
+const {
   buildBackgroundTaskRestoreSnapshots,
   resolveExistingSessionId,
   shouldPersistStartupState,
@@ -199,6 +221,10 @@ const {
   isXAIEndpoint,
   normalizeXAIBaseUrl,
 } = require("../dist/xai.js");
+const {
+  formatBrowserSnapshot,
+  normalizeBrowserUrl,
+} = require("../dist/browser-cdp.js");
 const {
   getChatScript,
 } = require("../dist/chat-script.js");
@@ -851,6 +877,661 @@ test("parseToolCalls understands newer IDE and editor-action tools", () => {
   assert.equal(calls[8].taskPrompt, "inspect auth flow and report risks");
 });
 
+test("parseToolCalls understands skill management text commands", () => {
+  const calls = parseToolCalls(`
+@skill_view: github-pr-workflow
+@skill_view: github-pr-workflow --path references/ci-troubleshooting.md
+@skill_scan: /tmp/local-skills
+@skill_scan
+@skill_install: /tmp/local-skills/debug-helper
+@skill_install: /tmp/local-skills/debug-helper --name debug-copy
+@skill_manage: list
+@skill_manage: disable github-pr-workflow
+@skill_manage: enable github-pr-workflow
+@mcp_list_resources: local
+@mcp_read_resource: local file:///tmp/context.txt
+@mcp_list_resource_templates
+@mcp_list_prompts: local
+@mcp_get_prompt: local review --args {"focus":"security"}
+`);
+
+  assert.deepEqual(
+    calls.map((call) => call.type),
+    [
+      "skill_view",
+      "skill_view",
+      "skill_scan",
+      "skill_scan",
+      "skill_install",
+      "skill_install",
+      "skill_manage",
+      "skill_manage",
+      "skill_manage",
+      "mcp_list_resources",
+      "mcp_read_resource",
+      "mcp_list_resource_templates",
+      "mcp_list_prompts",
+      "mcp_get_prompt",
+    ],
+  );
+  assert.equal(calls[0].skillName, "github-pr-workflow");
+  assert.equal(calls[0].filePath, "");
+  assert.equal(calls[1].skillName, "github-pr-workflow");
+  assert.equal(calls[1].filePath, "references/ci-troubleshooting.md");
+  assert.equal(calls[2].filePath, "/tmp/local-skills");
+  assert.equal(calls[3].filePath, "");
+  assert.equal(calls[4].filePath, "/tmp/local-skills/debug-helper");
+  assert.equal(calls[4].skillName, "");
+  assert.equal(calls[5].filePath, "/tmp/local-skills/debug-helper");
+  assert.equal(calls[5].skillName, "debug-copy");
+  assert.equal(calls[6].skillManageAction, "list");
+  assert.equal(calls[6].skillName, "");
+  assert.equal(calls[7].skillManageAction, "disable");
+  assert.equal(calls[7].skillName, "github-pr-workflow");
+  assert.equal(calls[8].skillManageAction, "enable");
+  assert.equal(calls[8].skillName, "github-pr-workflow");
+  assert.equal(calls[9].mcpServerName, "local");
+  assert.equal(calls[10].mcpServerName, "local");
+  assert.equal(calls[10].mcpResourceUri, "file:///tmp/context.txt");
+  assert.equal(calls[11].mcpServerName, "");
+  assert.equal(calls[12].mcpServerName, "local");
+  assert.equal(calls[13].mcpServerName, "local");
+  assert.equal(calls[13].mcpPromptName, "review");
+  assert.deepEqual(calls[13].mcpArguments, { focus: "security" });
+});
+
+test("parseToolCalls understands local browser text commands", () => {
+  const calls = parseToolCalls(`
+@browser_navigate: localhost:3000/login
+@browser_snapshot --max-elements 25 --max-body-chars 3000
+@browser_click: 3
+@browser_type: 3 hello world
+@browser_type: active text only
+@browser_screenshot --full-page
+@browser_close
+`);
+
+  assert.deepEqual(
+    calls.map((call) => call.type),
+    [
+      "browser_navigate",
+      "browser_snapshot",
+      "browser_click",
+      "browser_type",
+      "browser_type",
+      "browser_screenshot",
+      "browser_close",
+    ],
+  );
+  assert.equal(calls[0].browserUrl, "localhost:3000/login");
+  assert.equal(calls[0].url, "localhost:3000/login");
+  assert.equal(calls[1].browserMaxElements, 25);
+  assert.equal(calls[1].browserMaxBodyChars, 3000);
+  assert.equal(calls[2].browserRef, "3");
+  assert.equal(calls[3].browserRef, "3");
+  assert.equal(calls[3].browserText, "hello world");
+  assert.equal(calls[4].browserRef, "");
+  assert.equal(calls[4].browserText, "active text only");
+  assert.equal(calls[5].browserFullPage, true);
+});
+
+test("workspace skill helpers discover ancestor skills, metadata, and support files", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pocketai-skills-"));
+  const repoRoot = path.join(tempRoot, "repo");
+  const openedFolder = path.join(repoRoot, "pocketai-vscode");
+  const skillsRoot = path.join(repoRoot, ".pocketai", "skills");
+  const skillDir = path.join(skillsRoot, "category", "debug-helper");
+  fs.mkdirSync(path.join(skillDir, "references"), { recursive: true });
+  fs.mkdirSync(path.join(skillDir, "scripts"), { recursive: true });
+  fs.mkdirSync(path.join(skillDir, "node_modules", "junk"), { recursive: true });
+  fs.mkdirSync(path.join(skillsRoot, ".git", "hidden"), { recursive: true });
+  fs.mkdirSync(openedFolder, { recursive: true });
+
+  const skillPath = path.join(skillDir, "SKILL.md");
+  fs.writeFileSync(
+    skillPath,
+    [
+      "---",
+      "name: debug-helper",
+      "description: \"Debug helper workflow.\"",
+      "platforms:",
+      "  - linux",
+      "  - macos",
+      "metadata:",
+      "  hermes:",
+      "    tags: [debugging, root-cause]",
+      "    category: software-development",
+      "    related_skills: [test-driven-development, writing-plans]",
+      "---",
+      "",
+      "# Debug Helper",
+      "Read the references before fixing.",
+      "",
+    ].join("\n"),
+  );
+  fs.writeFileSync(path.join(skillsRoot, "flat.md"), "# Flat Skill\n");
+  fs.writeFileSync(path.join(skillDir, "references", "guide.md"), "Guide");
+  fs.writeFileSync(path.join(skillDir, "scripts", "inspect.js"), "inspect();");
+  fs.writeFileSync(
+    path.join(skillDir, "node_modules", "junk", "SKILL.md"),
+    "# Ignore me",
+  );
+  fs.writeFileSync(
+    path.join(skillsRoot, ".git", "hidden", "SKILL.md"),
+    "# Ignore me too",
+  );
+
+  assert.deepEqual(findWorkspaceSkillRoots([openedFolder]), [skillsRoot]);
+
+  const discovered = discoverWorkspaceSkillFiles(skillsRoot)
+    .map((filePath) => path.relative(skillsRoot, filePath).split(path.sep).join("/"))
+    .sort();
+  assert.deepEqual(discovered, ["category/debug-helper/SKILL.md", "flat.md"]);
+
+  const parsed = parseWorkspaceSkill(fs.readFileSync(skillPath, "utf-8"));
+  assert.equal(parsed.frontmatter.name, "debug-helper");
+  assert.equal(parsed.frontmatter.description, "Debug helper workflow.");
+  assert.deepEqual(parsed.frontmatter.platforms, ["linux", "macos"]);
+  assert.deepEqual(parsed.frontmatter.tags, ["debugging", "root-cause"]);
+  assert.equal(parsed.frontmatter.category, "software-development");
+  assert.deepEqual(parsed.frontmatter.relatedSkills, [
+    "test-driven-development",
+    "writing-plans",
+  ]);
+
+  const supportFiles = readWorkspaceSkillSupportFiles(skillDir).map((file) => ({
+    path: file.path,
+    kind: file.kind,
+  }));
+  assert.deepEqual(supportFiles, [
+    { path: "references/guide.md", kind: "references" },
+    { path: "scripts/inspect.js", kind: "scripts" },
+  ]);
+
+  assert.equal(
+    normalizeSkillRelativePath("references/guide.md"),
+    "references/guide.md",
+  );
+  assert.equal(normalizeSkillRelativePath("../secret.txt"), undefined);
+  assert.equal(normalizeSkillRelativePath("references/../secret.txt"), undefined);
+  assert.equal(normalizeSkillRelativePath("/tmp/secret.txt"), undefined);
+  assert.equal(normalizeSkillRelativePath("C:/secret.txt"), undefined);
+});
+
+test("workspace skill scanner reports candidates and installed conflicts", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pocketai-scan-"));
+  const skillsRoot = path.join(tempRoot, "skills");
+  const skillDir = path.join(skillsRoot, "debug-helper");
+  fs.mkdirSync(path.join(skillDir, "references"), { recursive: true });
+  fs.mkdirSync(path.join(skillsRoot, "node_modules", "ignored"), {
+    recursive: true,
+  });
+  fs.writeFileSync(
+    path.join(skillDir, "SKILL.md"),
+    [
+      "---",
+      "name: debug-helper",
+      "description: Debug helper workflow.",
+      "metadata:",
+      "  hermes:",
+      "    tags: [debugging, root-cause]",
+      "    category: software-development",
+      "---",
+      "",
+      "# Debug Helper",
+      "",
+    ].join("\n"),
+  );
+  fs.writeFileSync(path.join(skillDir, "references", "guide.md"), "Guide");
+  fs.writeFileSync(
+    path.join(skillsRoot, "node_modules", "ignored", "SKILL.md"),
+    "# Ignored",
+  );
+  fs.writeFileSync(path.join(skillsRoot, "flat.md"), "# Flat Skill\n");
+
+  const result = scanWorkspaceSkillCandidates(skillsRoot, [
+    { id: "debug-helper", path: "/installed/debug-helper/SKILL.md" },
+  ]);
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(
+    result.candidates.map((candidate) => candidate.id).sort(),
+    ["debug-helper", "flat"],
+  );
+  const debugCandidate = result.candidates.find(
+    (candidate) => candidate.id === "debug-helper",
+  );
+  assert.ok(debugCandidate);
+  assert.equal(debugCandidate.description, "Debug helper workflow.");
+  assert.equal(debugCandidate.sourcePath, path.join(skillDir, "SKILL.md"));
+  assert.equal(debugCandidate.supportFileCount, 1);
+  assert.equal(debugCandidate.category, "software-development");
+  assert.deepEqual(debugCandidate.tags, ["debugging", "root-cause"]);
+  assert.equal(debugCandidate.conflict, "installed");
+  assert.equal(debugCandidate.conflictPath, "/installed/debug-helper/SKILL.md");
+
+  const missing = scanWorkspaceSkillCandidates(path.join(tempRoot, "missing"));
+  assert.equal(missing.ok, false);
+  assert.match(missing.error, /does not exist/);
+});
+
+test("workspace skill installer copies skill and support files without overwriting", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pocketai-install-"));
+  const workspaceRoot = path.join(tempRoot, "workspace");
+  const sourceSkillDir = path.join(tempRoot, "source", "debug-helper");
+  fs.mkdirSync(path.join(sourceSkillDir, "references"), { recursive: true });
+  fs.mkdirSync(path.join(sourceSkillDir, "scripts"), { recursive: true });
+  fs.mkdirSync(workspaceRoot, { recursive: true });
+  fs.writeFileSync(
+    path.join(sourceSkillDir, "SKILL.md"),
+    [
+      "---",
+      "name: debug-helper",
+      "description: Debug helper workflow.",
+      "---",
+      "",
+      "# Debug Helper",
+      "",
+    ].join("\n"),
+  );
+  fs.writeFileSync(path.join(sourceSkillDir, "references", "guide.md"), "Guide");
+  fs.writeFileSync(path.join(sourceSkillDir, "scripts", "inspect.js"), "inspect();");
+
+  let symlinkCreated = false;
+  try {
+    fs.symlinkSync(
+      path.join(sourceSkillDir, "references", "guide.md"),
+      path.join(sourceSkillDir, "references", "guide-link.md"),
+    );
+    symlinkCreated = true;
+  } catch {
+    symlinkCreated = false;
+  }
+
+  const result = installWorkspaceSkillFromPath({
+    sourcePath: sourceSkillDir,
+    workspaceRoot,
+  });
+
+  assert.equal(result.ok, true);
+  const installedDir = path.join(workspaceRoot, ".pocketai", "skills", "debug-helper");
+  assert.equal(result.installedPath, installedDir);
+  assert.equal(
+    fs.readFileSync(path.join(installedDir, "SKILL.md"), "utf-8"),
+    fs.readFileSync(path.join(sourceSkillDir, "SKILL.md"), "utf-8"),
+  );
+  assert.equal(
+    fs.readFileSync(path.join(installedDir, "references", "guide.md"), "utf-8"),
+    "Guide",
+  );
+  assert.equal(
+    fs.readFileSync(path.join(installedDir, "scripts", "inspect.js"), "utf-8"),
+    "inspect();",
+  );
+  if (symlinkCreated) {
+    assert.equal(
+      fs.existsSync(path.join(installedDir, "references", "guide-link.md")),
+      false,
+    );
+    assert.equal(result.skippedSymlinkCount, 1);
+  }
+
+  const conflict = installWorkspaceSkillFromPath({
+    sourcePath: sourceSkillDir,
+    workspaceRoot,
+  });
+  assert.equal(conflict.ok, false);
+  assert.match(conflict.error, /already installed/);
+
+  if (symlinkCreated) {
+    const symlinkPath = path.join(tempRoot, "source-link");
+    fs.symlinkSync(sourceSkillDir, symlinkPath);
+    const symlinkResult = installWorkspaceSkillFromPath({
+      sourcePath: symlinkPath,
+      workspaceRoot,
+      desiredId: "debug-helper-copy",
+    });
+    assert.equal(symlinkResult.ok, false);
+    assert.match(symlinkResult.error, /symlink/);
+
+    const symlinkScan = scanWorkspaceSkillCandidates(symlinkPath);
+    assert.equal(symlinkScan.ok, false);
+    assert.match(symlinkScan.error, /symlink/);
+  }
+});
+
+test("workspace skill manager lists, disables, enables, and rejects unsafe targets", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pocketai-manage-"));
+  const workspaceRoot = path.join(tempRoot, "workspace");
+  const skillDir = path.join(workspaceRoot, ".pocketai", "skills", "debug-helper");
+  fs.mkdirSync(path.join(skillDir, "references"), { recursive: true });
+  fs.writeFileSync(
+    path.join(skillDir, "SKILL.md"),
+    [
+      "---",
+      "name: debug-helper",
+      "description: Debug helper workflow.",
+      "metadata:",
+      "  hermes:",
+      "    tags: [debugging]",
+      "    category: software-development",
+      "---",
+      "",
+      "# Debug Helper",
+      "",
+    ].join("\n"),
+  );
+  fs.writeFileSync(path.join(skillDir, "references", "guide.md"), "Guide");
+
+  const initialList = manageWorkspaceSkill({
+    workspaceRoots: [workspaceRoot],
+    action: "list",
+  });
+  assert.equal(initialList.ok, true);
+  assert.equal(initialList.skills.length, 1);
+  assert.equal(initialList.skills[0].id, "debug-helper");
+  assert.equal(initialList.skills[0].status, "enabled");
+  assert.equal(initialList.skills[0].supportFileCount, 1);
+  assert.equal(initialList.skills[0].category, "software-development");
+  assert.deepEqual(initialList.skills[0].tags, ["debugging"]);
+
+  const disabled = manageWorkspaceSkill({
+    workspaceRoots: [workspaceRoot],
+    action: "disable",
+    skillId: "debug-helper",
+    builtinSkillIds: ["builtin-debug"],
+  });
+  assert.equal(disabled.ok, true);
+  assert.equal(disabled.changed, true);
+  assert.equal(fs.existsSync(path.join(skillDir, ".pocketai-disabled")), true);
+  assert.equal(isWorkspaceSkillDisabled(skillDir), true);
+
+  const disabledList = listManagedWorkspaceSkills([workspaceRoot]);
+  assert.equal(disabledList.length, 1);
+  assert.equal(disabledList[0].status, "disabled");
+
+  const enabled = manageWorkspaceSkill({
+    workspaceRoots: [workspaceRoot],
+    action: "enable",
+    skillId: "debug-helper",
+  });
+  assert.equal(enabled.ok, true);
+  assert.equal(enabled.changed, true);
+  assert.equal(fs.existsSync(path.join(skillDir, ".pocketai-disabled")), false);
+  assert.equal(isWorkspaceSkillDisabled(skillDir), false);
+
+  const unknown = manageWorkspaceSkill({
+    workspaceRoots: [workspaceRoot],
+    action: "disable",
+    skillId: "missing-skill",
+  });
+  assert.equal(unknown.ok, false);
+  assert.match(unknown.error, /Unknown installed workspace skill/);
+
+  const builtin = manageWorkspaceSkill({
+    workspaceRoots: [workspaceRoot],
+    action: "disable",
+    skillId: "builtin-debug",
+    builtinSkillIds: ["builtin-debug"],
+  });
+  assert.equal(builtin.ok, false);
+  assert.match(builtin.error, /built-in skill/);
+
+  let symlinkCreated = false;
+  try {
+    fs.symlinkSync(
+      path.join(skillDir, "SKILL.md"),
+      path.join(skillDir, ".pocketai-disabled"),
+    );
+    symlinkCreated = true;
+  } catch {
+    symlinkCreated = false;
+  }
+  if (symlinkCreated) {
+    const symlinkEnable = manageWorkspaceSkill({
+      workspaceRoots: [workspaceRoot],
+      action: "enable",
+      skillId: "debug-helper",
+    });
+    assert.equal(symlinkEnable.ok, false);
+    assert.match(symlinkEnable.error, /symlink/);
+  }
+});
+
+test("structured tools include skill management and browser tools", () => {
+  const names = TOOL_DEFINITIONS.map((tool) => tool.function.name);
+  assert.equal(names.includes("skill_view"), true);
+  assert.equal(names.includes("skill_scan"), true);
+  assert.equal(names.includes("skill_install"), true);
+  assert.equal(names.includes("skill_manage"), true);
+  assert.equal(names.includes("mcp_list_resources"), true);
+  assert.equal(names.includes("mcp_read_resource"), true);
+  assert.equal(names.includes("mcp_list_resource_templates"), true);
+  assert.equal(names.includes("mcp_list_prompts"), true);
+  assert.equal(names.includes("mcp_get_prompt"), true);
+  assert.equal(names.includes("browser_navigate"), true);
+  assert.equal(names.includes("browser_snapshot"), true);
+  assert.equal(names.includes("browser_click"), true);
+  assert.equal(names.includes("browser_type"), true);
+  assert.equal(names.includes("browser_screenshot"), true);
+  assert.equal(names.includes("browser_close"), true);
+
+  const skillInstall = TOOL_DEFINITIONS.find(
+    (tool) => tool.function.name === "skill_install",
+  );
+  assert.ok(skillInstall);
+  assert.deepEqual(skillInstall.function.parameters.required, ["path"]);
+
+  const skillManage = TOOL_DEFINITIONS.find(
+    (tool) => tool.function.name === "skill_manage",
+  );
+  assert.ok(skillManage);
+  assert.deepEqual(skillManage.function.parameters.required, ["action"]);
+
+  const mcpReadResource = TOOL_DEFINITIONS.find(
+    (tool) => tool.function.name === "mcp_read_resource",
+  );
+  assert.ok(mcpReadResource);
+  assert.deepEqual(mcpReadResource.function.parameters.required, ["server", "uri"]);
+
+  const mcpGetPrompt = TOOL_DEFINITIONS.find(
+    (tool) => tool.function.name === "mcp_get_prompt",
+  );
+  assert.ok(mcpGetPrompt);
+  assert.deepEqual(mcpGetPrompt.function.parameters.required, ["server", "name"]);
+
+  const browserNavigate = TOOL_DEFINITIONS.find(
+    (tool) => tool.function.name === "browser_navigate",
+  );
+  assert.ok(browserNavigate);
+  assert.deepEqual(browserNavigate.function.parameters.required, ["url"]);
+
+  const browserClick = TOOL_DEFINITIONS.find(
+    (tool) => tool.function.name === "browser_click",
+  );
+  assert.ok(browserClick);
+  assert.deepEqual(browserClick.function.parameters.required, ["ref"]);
+
+  const browserType = TOOL_DEFINITIONS.find(
+    (tool) => tool.function.name === "browser_type",
+  );
+  assert.ok(browserType);
+  assert.deepEqual(browserType.function.parameters.required, ["text"]);
+});
+
+test("browser snapshot formatting is bounded and index/ref oriented", () => {
+  const formatted = formatBrowserSnapshot({
+    url: "http://localhost:3000/login",
+    title: "Login",
+    bodyText: "Welcome back",
+    bodyTextTruncated: true,
+    elementsTruncated: true,
+    elements: [
+      {
+        ref: "7",
+        tag: "input",
+        role: "textbox",
+        text: "",
+        ariaLabel: "Email",
+        placeholder: "name@example.com",
+        inputType: "email",
+        href: "",
+        disabled: false,
+        rect: { x: 10, y: 20, width: 200, height: 32 },
+      },
+      {
+        ref: "8",
+        tag: "button",
+        role: "button",
+        text: "Sign in",
+        ariaLabel: "",
+        placeholder: "",
+        inputType: "",
+        href: "",
+        disabled: true,
+        rect: { x: 10, y: 64, width: 100, height: 32 },
+      },
+    ],
+  });
+
+  assert.match(formatted, /Browser snapshot/);
+  assert.match(formatted, /Body text \(truncated\):/);
+  assert.match(formatted, /Interactive elements \(2, truncated\):/);
+  assert.match(formatted, /\[1\] ref=7 <input> Email \(role=textbox, type=email\)/);
+  assert.match(formatted, /\[2\] ref=8 <button> Sign in \(role=button, disabled\)/);
+  assert.equal(normalizeBrowserUrl("localhost:3000"), "http://localhost:3000/");
+  assert.throws(() => normalizeBrowserUrl("javascript:alert(1)"), /Unsupported/);
+});
+
+test("MCP formatting includes provenance, truncates text, and omits blobs", () => {
+  const longText = "x".repeat(13000);
+  const resourceOutput = formatMcpResourceRead("local", "file:///big.txt", {
+    contents: [
+      {
+        uri: "file:///big.txt",
+        mimeType: "text/plain",
+        text: longText,
+      },
+      {
+        uri: "file:///image.png",
+        mimeType: "image/png",
+        blob: "abcdef",
+      },
+    ],
+  });
+
+  assert.match(resourceOutput, /MCP resource from server "local": file:\/\/\/big\.txt/);
+  assert.match(resourceOutput, /mime=text\/plain/);
+  assert.match(resourceOutput, /\[truncated 1000 characters\]/);
+  assert.match(resourceOutput, /binary\/blob content omitted/);
+  assert.doesNotMatch(resourceOutput, /abcdef/);
+
+  const promptOutput = formatMcpPromptGet("local", "review", {
+    description: "Review prompt",
+    messages: [
+      { role: "user", content: { type: "text", text: "Review this" } },
+    ],
+  });
+  assert.match(promptOutput, /MCP prompt from server "local": review/);
+  assert.match(promptOutput, /Returned as tool output only/);
+  assert.match(promptOutput, /Review this/);
+});
+
+test("MCP client paginates stdio tools, resources, and prompts", async () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pocketai-mcp-"));
+  const serverPath = path.join(tempRoot, "server.cjs");
+  fs.writeFileSync(
+    serverPath,
+    `
+const readline = require("node:readline");
+const rl = readline.createInterface({ input: process.stdin });
+function send(id, result) {
+  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, result }) + "\\n");
+}
+rl.on("line", (line) => {
+  const msg = JSON.parse(line);
+  if (!msg.id) return;
+  const cursor = msg.params && msg.params.cursor;
+  if (msg.method === "initialize") {
+    send(msg.id, {
+      protocolVersion: "2024-11-05",
+      capabilities: { resources: {}, prompts: {}, tools: {} },
+      instructions: "fake instructions"
+    });
+  } else if (msg.method === "tools/list") {
+    send(msg.id, cursor
+      ? { tools: [{ name: "tool-b", inputSchema: { type: "object", properties: {} } }] }
+      : { tools: [{ name: "tool-a", inputSchema: { type: "object", properties: {} } }], nextCursor: "page-2" });
+  } else if (msg.method === "resources/list") {
+    send(msg.id, cursor
+      ? { resources: [{ uri: "file:///b.txt", mimeType: "text/plain" }] }
+      : { resources: [{ uri: "file:///a.txt", mimeType: "text/plain" }], nextCursor: "page-2" });
+  } else if (msg.method === "resources/templates/list") {
+    send(msg.id, { resourceTemplates: [{ uriTemplate: "file:///{name}.txt", name: "file" }] });
+  } else if (msg.method === "prompts/list") {
+    send(msg.id, cursor
+      ? { prompts: [{ name: "prompt-b" }] }
+      : { prompts: [{ name: "prompt-a" }], nextCursor: "page-2" });
+  } else if (msg.method === "resources/read") {
+    send(msg.id, { contents: [{ uri: msg.params.uri, mimeType: "text/plain", text: "hello" }] });
+  } else if (msg.method === "prompts/get") {
+    send(msg.id, { messages: [{ role: "user", content: { type: "text", text: "focus " + (msg.params.arguments && msg.params.arguments.focus) } }] });
+  } else {
+    send(msg.id, {});
+  }
+});
+`,
+  );
+
+  const Module = require("node:module");
+  const originalLoad = Module._load;
+  Module._load = function patchedLoad(request, parent, isMain) {
+    if (request === "vscode") return {};
+    return originalLoad.call(this, request, parent, isMain);
+  };
+  let McpManager;
+  try {
+    ({ McpManager } = require("../dist/mcp-client.js"));
+  } finally {
+    Module._load = originalLoad;
+  }
+
+  const manager = new McpManager({ appendLine() {} });
+  try {
+    await manager.connectAll([
+      { name: "fake", command: process.execPath, args: [serverPath] },
+    ]);
+
+    assert.deepEqual(manager.getConnectedServers(), ["fake"]);
+    assert.equal(manager.getToolDefinitions().length, 2);
+    assert.equal(manager.getServerMetadata("fake").protocolVersion, "2024-11-05");
+    assert.equal(manager.getServerMetadata("fake").instructions, "fake instructions");
+
+    const resources = await manager.listResources("fake");
+    assert.deepEqual(
+      resources[0].resources.map((resource) => resource.uri),
+      ["file:///a.txt", "file:///b.txt"],
+    );
+
+    const templates = await manager.listResourceTemplates("fake");
+    assert.equal(templates[0].templates[0].uriTemplate, "file:///{name}.txt");
+
+    const prompts = await manager.listPrompts("fake");
+    assert.deepEqual(
+      prompts[0].prompts.map((prompt) => prompt.name),
+      ["prompt-a", "prompt-b"],
+    );
+
+    const resource = await manager.readResource("fake", "file:///a.txt");
+    assert.equal(resource.contents[0].text, "hello");
+
+    const prompt = await manager.getPrompt("fake", "prompt-a", { focus: "security" });
+    assert.equal(prompt.messages[0].content.text, "focus security");
+  } finally {
+    manager.disposeAll();
+  }
+});
+
 test("stripFabricatedResults removes fake tool calls and fabricated dialogue", () => {
   const stripped = stripFabricatedResults(`
 Real answer
@@ -900,6 +1581,17 @@ test("policy helpers classify risk and approvals conservatively", () => {
   assert.equal(classifyToolRisk("run_command"), "caution");
   assert.equal(classifyToolRisk("git_commit"), "destructive");
   assert.equal(classifyToolRisk("task"), "safe");
+  assert.equal(classifyToolRisk("skill_scan"), "safe");
+  assert.equal(classifyToolRisk("skill_install"), "caution");
+  assert.equal(classifyToolRisk("skill_manage"), "caution");
+  assert.equal(classifyToolRisk("mcp_list_resources"), "safe");
+  assert.equal(classifyToolRisk("mcp_read_resource"), "caution");
+  assert.equal(classifyToolRisk("browser_snapshot"), "safe");
+  assert.equal(classifyToolRisk("browser_screenshot"), "safe");
+  assert.equal(classifyToolRisk("browser_navigate"), "caution");
+  assert.equal(classifyToolRisk("browser_click"), "caution");
+  assert.equal(classifyToolRisk("browser_type"), "caution");
+  assert.equal(classifyToolRisk("browser_close"), "caution");
   assert.equal(classifyToolRisk("memory_write"), "caution");
   assert.equal(classifyToolRisk("mcp__foo", true), "external");
 
@@ -958,7 +1650,28 @@ test("policy helpers classify risk and approvals conservatively", () => {
   );
   assert.equal(shouldAutoExecuteTool("ask", commandCall), false);
   assert.equal(NON_DESTRUCTIVE_TOOL_TYPES.has("task"), true);
+  assert.equal(NON_DESTRUCTIVE_TOOL_TYPES.has("skill_scan"), true);
+  assert.equal(NON_DESTRUCTIVE_TOOL_TYPES.has("skill_install"), false);
+  assert.equal(NON_DESTRUCTIVE_TOOL_TYPES.has("skill_manage"), false);
+  assert.equal(NON_DESTRUCTIVE_TOOL_TYPES.has("mcp_list_prompts"), true);
+  assert.equal(NON_DESTRUCTIVE_TOOL_TYPES.has("mcp_get_prompt"), false);
+  assert.equal(NON_DESTRUCTIVE_TOOL_TYPES.has("browser_snapshot"), true);
+  assert.equal(NON_DESTRUCTIVE_TOOL_TYPES.has("browser_screenshot"), true);
+  assert.equal(NON_DESTRUCTIVE_TOOL_TYPES.has("browser_navigate"), false);
+  assert.equal(NON_DESTRUCTIVE_TOOL_TYPES.has("browser_click"), false);
+  assert.equal(NON_DESTRUCTIVE_TOOL_TYPES.has("browser_type"), false);
+  assert.equal(NON_DESTRUCTIVE_TOOL_TYPES.has("browser_close"), false);
   assert.equal(isReadonlySubagentTool("read_file"), true);
+  assert.equal(isReadonlySubagentTool("skill_scan"), true);
+  assert.equal(isReadonlySubagentTool("skill_install"), false);
+  assert.equal(isReadonlySubagentTool("mcp_list_resources"), true);
+  assert.equal(isReadonlySubagentTool("mcp_read_resource"), false);
+  assert.equal(isReadonlySubagentTool("browser_snapshot"), true);
+  assert.equal(isReadonlySubagentTool("browser_screenshot"), true);
+  assert.equal(isReadonlySubagentTool("browser_navigate"), false);
+  assert.equal(isReadonlySubagentTool("browser_click"), false);
+  assert.equal(isReadonlySubagentTool("browser_type"), false);
+  assert.equal(isReadonlySubagentTool("browser_close"), false);
   assert.equal(isReadonlySubagentTool("edit_file"), false);
   assert.equal(isReadonlySubagentTool("task"), false);
   assert.equal(isAllowedSubagentTool({ subagentReadonly: true }, "edit_file"), false);
@@ -2693,6 +3406,11 @@ test("OpenCode Go helpers normalize endpoint URLs and expose chat-compatible mod
     "opencode-go/glm-5",
     "opencode-go/glm-5.1",
     "opencode-go/kimi-k2.5",
+    "opencode-go/kimi-k2.6",
+    "opencode-go/deepseek-v4-pro",
+    "opencode-go/deepseek-v4-flash",
+    "opencode-go/mimo-v2.5",
+    "opencode-go/mimo-v2.5-pro",
     "opencode-go/mimo-v2-pro",
     "opencode-go/mimo-v2-omni",
   ]);

@@ -352,6 +352,24 @@ function describeTimelineTool(
       return { label: "Search web", target: toolCall?.query || "query" };
     case "web_fetch":
       return { label: "Fetch", target: compactUrl(toolCall?.url || "") || "page" };
+    case "browser_navigate":
+      return {
+        label: "Browser navigate",
+        target: compactUrl(toolCall?.browserUrl || toolCall?.url || "") || "page",
+      };
+    case "browser_snapshot":
+      return { label: "Browser snapshot", target: "current page" };
+    case "browser_click":
+      return { label: "Browser click", target: toolCall?.browserRef || "element" };
+    case "browser_type":
+      return {
+        label: "Browser type",
+        target: toolCall?.browserRef || "active element",
+      };
+    case "browser_screenshot":
+      return { label: "Browser screenshot", target: "current page" };
+    case "browser_close":
+      return { label: "Browser close", target: "browser session" };
     case "run_command":
       return { label: "Run", target: toolCall?.command || "command" };
     case "grep":
@@ -376,6 +394,24 @@ function describeTimelineTool(
       return { label: "List skills", target: toolCall?.query || "registry" };
     case "run_skill":
       return { label: "Run skill", target: toolCall?.skillName || "skill" };
+    case "skill_view":
+      return { label: "View skill", target: toolCall?.skillName || "skill" };
+    case "skill_scan":
+      return { label: "Scan skills", target: fileTarget || "workspace" };
+    case "skill_install":
+      return { label: "Install skill", target: toolCall?.skillName || fileTarget || "skill" };
+    case "skill_manage":
+      return { label: "Manage skill", target: toolCall?.skillName || toolCall?.skillManageAction || "skills" };
+    case "mcp_list_resources":
+      return { label: "List MCP resources", target: toolCall?.mcpServerName || "MCP servers" };
+    case "mcp_read_resource":
+      return { label: "Read MCP resource", target: toolCall?.mcpResourceUri || "resource" };
+    case "mcp_list_resource_templates":
+      return { label: "List MCP templates", target: toolCall?.mcpServerName || "MCP servers" };
+    case "mcp_list_prompts":
+      return { label: "List MCP prompts", target: toolCall?.mcpServerName || "MCP servers" };
+    case "mcp_get_prompt":
+      return { label: "Get MCP prompt", target: toolCall?.mcpPromptName || "prompt" };
     case "memory_read":
       return { label: "Read memory", target: toolCall?.memoryQuery || toolCall?.memoryType || "memory" };
     case "memory_write":

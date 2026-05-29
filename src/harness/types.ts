@@ -1,4 +1,5 @@
 import type { OpenAITool } from "../tool-definitions";
+import type { HarnessSkillDescriptor } from "./skills/registry";
 import type {
   ChatSession,
   InteractionMode,
@@ -68,21 +69,8 @@ export interface HarnessToolRegistry {
   getToolDescriptor(toolName: string): HarnessToolDescriptor | undefined;
   isMcpTool(toolName: string): boolean;
   getStructuredToolDefinitions(): OpenAITool[] | undefined;
-  listSkills(query?: string): Array<{
-    id: string;
-    name: string;
-    description: string;
-    source: "builtin" | "workspace";
-    path?: string;
-  }>;
-  getSkill(skillId: string): {
-    id: string;
-    name: string;
-    description: string;
-    source: "builtin" | "workspace";
-    prompt: string;
-    path?: string;
-  } | undefined;
+  listSkills(query?: string): HarnessSkillDescriptor[];
+  getSkill(skillId: string): HarnessSkillDescriptor | undefined;
 }
 
 export interface HarnessToolRuntime {

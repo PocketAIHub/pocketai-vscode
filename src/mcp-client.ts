@@ -2,6 +2,13 @@ import * as vscode from "vscode";
 import * as child_process from "child_process";
 import type { ToolCall } from "./types";
 import type { OpenAITool } from "./tool-definitions";
+import type {
+  McpPrompt,
+  McpPromptGetResult,
+  McpResource,
+  McpResourceReadResult,
+  McpResourceTemplate,
+} from "./mcp-format";
 
 /**
  * MCP (Model Context Protocol) client for connecting to external tool servers.
@@ -24,6 +31,13 @@ type McpTool = {
     properties?: Record<string, { type: string; description?: string }>;
     required?: string[];
   };
+};
+
+export type McpServerMetadata = {
+  name: string;
+  capabilities?: Record<string, unknown>;
+  instructions?: string;
+  protocolVersion?: string;
 };
 
 type JsonRpcMessage = {
@@ -135,12 +149,86 @@ export class McpManager {
     return Array.from(this.servers.keys());
   }
 
+  getServerMetadata(serverName: string): McpServerMetadata | undefined {
+    return this.servers.get(serverName)?.getMetadata();
+  }
+
+  async listResources(
+    serverName?: string,
+  ): Promise<Array<{ serverName: string; resources: McpResource[] }>> {
+    const entries = this.getServerEntries(serverName);
+    return Promise.all(
+      entries.map(async ([name, conn]) => ({
+        serverName: name,
+        resources: conn.supportsCapability("resources")
+          ? await conn.listResources()
+          : [],
+      })),
+    );
+  }
+
+  async readResource(
+    serverName: string,
+    uri: string,
+  ): Promise<McpResourceReadResult> {
+    const conn = this.servers.get(serverName);
+    if (!conn) throw new Error(`MCP server "${serverName}" not connected.`);
+    return conn.readResource(uri);
+  }
+
+  async listResourceTemplates(
+    serverName?: string,
+  ): Promise<Array<{ serverName: string; templates: McpResourceTemplate[] }>> {
+    const entries = this.getServerEntries(serverName);
+    return Promise.all(
+      entries.map(async ([name, conn]) => ({
+        serverName: name,
+        templates: conn.supportsCapability("resources")
+          ? await conn.listResourceTemplates()
+          : [],
+      })),
+    );
+  }
+
+  async listPrompts(
+    serverName?: string,
+  ): Promise<Array<{ serverName: string; prompts: McpPrompt[] }>> {
+    const entries = this.getServerEntries(serverName);
+    return Promise.all(
+      entries.map(async ([name, conn]) => ({
+        serverName: name,
+        prompts: conn.supportsCapability("prompts")
+          ? await conn.listPrompts()
+          : [],
+      })),
+    );
+  }
+
+  async getPrompt(
+    serverName: string,
+    name: string,
+    args?: Record<string, unknown>,
+  ): Promise<McpPromptGetResult> {
+    const conn = this.servers.get(serverName);
+    if (!conn) throw new Error(`MCP server "${serverName}" not connected.`);
+    return conn.getPrompt(name, args);
+  }
+
   /** Disconnect all servers. */
   disposeAll() {
     for (const conn of this.servers.values()) {
       conn.dispose();
     }
     this.servers.clear();
+  }
+
+  private getServerEntries(
+    serverName?: string,
+  ): Array<[string, McpServerConnection]> {
+    if (!serverName) return Array.from(this.servers.entries());
+    const conn = this.servers.get(serverName);
+    if (!conn) throw new Error(`MCP server "${serverName}" not connected.`);
+    return [[serverName, conn]];
   }
 }
 
@@ -153,6 +241,12 @@ class McpServerConnection {
   >();
   private buffer = "";
   tools: McpTool[] = [];
+  private capabilities?: Record<string, unknown>;
+  private instructions?: string;
+  private protocolVersion?: string;
+  private resources?: McpResource[];
+  private resourceTemplates?: McpResourceTemplate[];
+  private prompts?: McpPrompt[];
 
   constructor(
     private config: McpServerConfig,
@@ -213,12 +307,35 @@ class McpServerConnection {
           } else {
             p.resolve(msg.result);
           }
+        } else if (msg.method) {
+          this.handleNotification(msg.method);
         }
       } catch {
         this.outputChannel.appendLine(
           `MCP [${this.config.name}] invalid JSON: ${line.slice(0, 200)}`,
         );
       }
+    }
+  }
+
+  private handleNotification(method: string) {
+    if (method === "notifications/tools/list_changed") {
+      void this.refreshTools().catch((error) => {
+        this.outputChannel.appendLine(
+          `MCP [${this.config.name}] failed to refresh tools: ${(error as Error).message}`,
+        );
+      });
+      return;
+    }
+
+    if (method === "notifications/resources/list_changed") {
+      this.resources = undefined;
+      this.resourceTemplates = undefined;
+      return;
+    }
+
+    if (method === "notifications/prompts/list_changed") {
+      this.prompts = undefined;
     }
   }
 
@@ -262,7 +379,14 @@ class McpServerConnection {
       protocolVersion: "2024-11-05",
       capabilities: {},
       clientInfo: { name: "PocketAI", version: "1.0.0" },
-    })) as { capabilities?: Record<string, unknown> };
+    })) as {
+      capabilities?: Record<string, unknown>;
+      instructions?: string;
+      protocolVersion?: string;
+    };
+    this.capabilities = result.capabilities;
+    this.instructions = result.instructions;
+    this.protocolVersion = result.protocolVersion;
 
     // Send initialized notification
     const notification: JsonRpcMessage = {
@@ -277,13 +401,93 @@ class McpServerConnection {
   }
 
   async refreshTools() {
-    const result = (await this.sendRequest("tools/list")) as {
-      tools?: McpTool[];
-    };
-    this.tools = result?.tools || [];
+    this.tools = await this.sendPaginatedList<McpTool>("tools/list", "tools");
     this.outputChannel.appendLine(
       `MCP [${this.config.name}]: ${this.tools.length} tools available`,
     );
+  }
+
+  getMetadata(): McpServerMetadata {
+    return {
+      name: this.config.name,
+      capabilities: this.capabilities,
+      instructions: this.instructions,
+      protocolVersion: this.protocolVersion,
+    };
+  }
+
+  supportsCapability(name: string): boolean {
+    if (!this.capabilities) return true;
+    return Object.prototype.hasOwnProperty.call(this.capabilities, name);
+  }
+
+  async listResources(): Promise<McpResource[]> {
+    if (!this.resources) {
+      this.resources = await this.sendPaginatedList<McpResource>(
+        "resources/list",
+        "resources",
+      );
+    }
+    return this.resources;
+  }
+
+  async readResource(uri: string): Promise<McpResourceReadResult> {
+    return (await this.sendRequest("resources/read", { uri })) as McpResourceReadResult;
+  }
+
+  async listResourceTemplates(): Promise<McpResourceTemplate[]> {
+    if (!this.resourceTemplates) {
+      this.resourceTemplates = await this.sendPaginatedList<McpResourceTemplate>(
+        "resources/templates/list",
+        "resourceTemplates",
+      );
+    }
+    return this.resourceTemplates;
+  }
+
+  async listPrompts(): Promise<McpPrompt[]> {
+    if (!this.prompts) {
+      this.prompts = await this.sendPaginatedList<McpPrompt>(
+        "prompts/list",
+        "prompts",
+      );
+    }
+    return this.prompts;
+  }
+
+  async getPrompt(
+    name: string,
+    args?: Record<string, unknown>,
+  ): Promise<McpPromptGetResult> {
+    return (await this.sendRequest("prompts/get", {
+      name,
+      ...(args && Object.keys(args).length ? { arguments: args } : {}),
+    })) as McpPromptGetResult;
+  }
+
+  private async sendPaginatedList<T>(
+    method: string,
+    resultKey: string,
+  ): Promise<T[]> {
+    const items: T[] = [];
+    let cursor: string | undefined;
+
+    for (let page = 0; page < 50; page++) {
+      const result = (await this.sendRequest(
+        method,
+        cursor ? { cursor } : undefined,
+      )) as Record<string, unknown> | undefined;
+      const pageItems = result?.[resultKey];
+      if (Array.isArray(pageItems)) {
+        items.push(...(pageItems as T[]));
+      }
+
+      const nextCursor = result?.nextCursor;
+      if (typeof nextCursor !== "string" || !nextCursor) break;
+      cursor = nextCursor;
+    }
+
+    return items;
   }
 
   async callTool(

@@ -7,6 +7,15 @@ export type ToolCallType =
   | "list_tools"
   | "list_skills"
   | "run_skill"
+  | "skill_view"
+  | "skill_scan"
+  | "skill_install"
+  | "skill_manage"
+  | "mcp_list_resources"
+  | "mcp_read_resource"
+  | "mcp_list_resource_templates"
+  | "mcp_list_prompts"
+  | "mcp_get_prompt"
   | "diagnostics"
   | "open_file"
   | "open_definition"
@@ -22,6 +31,12 @@ export type ToolCallType =
   | "write_file"
   | "web_search"
   | "web_fetch"
+  | "browser_navigate"
+  | "browser_snapshot"
+  | "browser_click"
+  | "browser_type"
+  | "browser_screenshot"
+  | "browser_close"
   | "list_files"
   | "run_command"
   | "grep"
@@ -49,6 +64,7 @@ export type ToolCall = {
   // skills
   skillName?: string;
   skillPrompt?: string;
+  skillManageAction?: string;
   actionTitle?: string;
   actionKind?: string;
   // edit_file
@@ -79,6 +95,13 @@ export type ToolCall = {
   globPath?: string;
   // web_search / web_fetch
   url?: string;
+  // browser automation
+  browserUrl?: string;
+  browserRef?: string;
+  browserText?: string;
+  browserFullPage?: boolean;
+  browserMaxBodyChars?: number;
+  browserMaxElements?: number;
   // git_commit
   commitMessage?: string;
   // todo_write
@@ -94,6 +117,11 @@ export type ToolCall = {
   memoryDescription?: string;
   memoryContent?: string;
   memoryQuery?: string;
+  // MCP resources/prompts
+  mcpServerName?: string;
+  mcpResourceUri?: string;
+  mcpPromptName?: string;
+  mcpArguments?: Record<string, unknown>;
   // general
   status: "pending" | "approved" | "rejected" | "executed" | "error";
   result?: string;

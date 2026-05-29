@@ -591,6 +591,10 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
   }
 
   private async syncManagedPocketAiDeviceEndpoints() {
+    // In extension tests the real PocketAI desktop app may be running on this
+    // machine and would leak its registered remote devices into the endpoint
+    // list, breaking test isolation. Skip device discovery under test mode.
+    if (this.context.extensionMode === vscode.ExtensionMode.Test) return;
     try {
       const endpoints = await fetchPocketAiRemoteEndpoints(LOCAL_POCKETAI_URL);
       const changed = this.endpointMgr.setManagedEndpoints(endpoints);
@@ -776,7 +780,7 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
 
   private async refreshBridgeUsageForEndpoint(
     endpointUrl: string,
-    options: { post?: boolean } = {},
+    options: { post?: boolean; force?: boolean } = {},
   ): Promise<boolean> {
     const resolvedEndpointUrl = normalizeEndpointInputUrl(endpointUrl);
     const kind = this.endpointMgr.getEndpointCapabilities(resolvedEndpointUrl).kind;
@@ -794,9 +798,10 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
     let nextState: BridgeUsageState;
 
     try {
-      const response = await fetch(`${resolvedEndpointUrl}/usage`, {
+      const usagePath = options.force ? "/usage?force=1" : "/usage";
+      const response = await fetch(`${resolvedEndpointUrl}${usagePath}`, {
         headers: { Authorization: `Bearer ${apiKey}` },
-        signal: AbortSignal.timeout(5000),
+        signal: AbortSignal.timeout(options.force ? 25_000 : 5_000),
       });
       if (!response.ok) {
         nextState = {
@@ -823,13 +828,13 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
     const next = JSON.stringify(nextState);
     this.bridgeUsageByEndpoint.set(resolvedEndpointUrl, nextState);
 
-    if (options.post && previous !== next) {
+    if (options.post && (options.force || previous !== next)) {
       this.postState();
       this.pushSettingsState();
       this.updateStatusBar();
     }
 
-    return previous !== next;
+    return options.force || previous !== next;
   }
 
   private async refreshBridgeUsage(options: { post?: boolean } = {}) {
@@ -1468,6 +1473,7 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
                       : this.endpointMgr.getResolvedActiveEndpointUrl();
             await this.refreshBridgeUsageForEndpoint(endpointUrl, {
               post: true,
+              force: true,
             });
             this.pushSettingsState();
             break;

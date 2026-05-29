@@ -376,6 +376,11 @@ export class CodexBridgeManager {
       cwd: this.context.extensionPath,
       env: {
         ...process.env,
+        // In the extension host, process.execPath is VS Code's Electron binary,
+        // not Node. This flag makes it run the bridge script as Node so the
+        // server actually starts (otherwise it launches as a GUI app and the
+        // bridge port is never bound — "Connection refused").
+        ELECTRON_RUN_AS_NODE: "1",
         CODEX_BRIDGE_CWD: workspaceRoot,
         CODEX_BRIDGE_CODEX_BIN: this.codexBin,
       },

@@ -13,6 +13,14 @@ export function getToolPermissionArg(toolCall: ToolCall): string {
   const argByType: Partial<Record<ToolCallType, string>> = {
     web_search: toolCall.query || "",
     web_fetch: toolCall.url || "",
+    browser_navigate: toolCall.browserUrl || toolCall.url || "",
+    browser_snapshot: "current_page",
+    browser_click: toolCall.browserRef || "",
+    browser_type: [toolCall.browserRef || "active", toolCall.browserText || ""]
+      .filter(Boolean)
+      .join(" "),
+    browser_screenshot: toolCall.browserFullPage ? "full_page" : "viewport",
+    browser_close: "browser_session",
     run_command: toolCall.command || "",
     grep: toolCall.pattern || "",
     glob: toolCall.glob || "",
