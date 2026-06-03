@@ -44,6 +44,8 @@ export function buildSlashHelpContent(skillLines: string[]): string {
     "- `/branch [name]` — inspect or switch git branches",
     "- `/worktree <name|status|exit>` — isolate this chat in a git worktree",
     "- `/permissions` — show active allow/deny permission rules",
+    "- `/vault [init|status|source|run|learn|open]` — manage the project process vault",
+    "- `/evals [pass/fail check]` — inspect or add project evals",
     "- `/review [scope]` — review current git diff, optionally with a focus",
     "- `/memory [query|clear]` — inspect or clear saved memory",
     "- `/remember <text>` — save a memory",

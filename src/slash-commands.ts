@@ -23,6 +23,17 @@ import {
 } from "./slash-command-utils";
 import { getSessionWorkspaceRoot } from "./workspace-roots";
 import {
+  appendProjectEval,
+  appendVaultLearning,
+  buildProcessVaultStatus,
+  createRunLog,
+  createSourcePacket,
+  ensureProcessVault,
+  getProcessVaultPaths,
+  resolveVaultOpenPath,
+  type ProcessVaultResult,
+} from "./process-vault";
+import {
   applyClearSlashCommand,
   applyExplicitModeSlashCommand,
   applyModelSlashCommand,
@@ -93,6 +104,18 @@ export async function handleSlashCommand(
   const parts = input.split(/\s+/);
   const cmd = parts[0].toLowerCase();
   const arg = parts.slice(1).join(" ").trim();
+  const getWorkspaceRoot = () =>
+    getSessionWorkspaceRoot(session) || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  const applyProcessVaultResult = async (result: ProcessVaultResult) => {
+    session.transcript.push({
+      role: "tool",
+      content: result.transcript,
+    });
+    session.status = result.status;
+    deps.sessionMgr.touchSession(session);
+    await deps.sessionMgr.saveState();
+    deps.postState();
+  };
 
   switch (cmd) {
     case "/help":
@@ -358,6 +381,154 @@ export async function handleSlashCommand(
       deps.sessionMgr.touchSession(session);
       await deps.sessionMgr.saveState();
       deps.postState();
+      return true;
+    }
+
+    case "/vault": {
+      const rootPath = getWorkspaceRoot();
+      if (!rootPath) {
+        session.status = "Process vault unavailable: no workspace folder is open.";
+        deps.postState();
+        return true;
+      }
+
+      const [action = "status", ...restParts] = arg.split(/\s+/).filter(Boolean);
+      const rest = restParts.join(" ").trim();
+      const normalizedAction = action.toLowerCase();
+      let result: ProcessVaultResult;
+
+      if (normalizedAction === "status" || normalizedAction === "list") {
+        result = buildProcessVaultStatus(rootPath);
+      } else if (
+        normalizedAction === "init" ||
+        normalizedAction === "setup" ||
+        normalizedAction === "create"
+      ) {
+        result = ensureProcessVault(rootPath);
+        deps.memoryMgr?.upsert(
+          "reference",
+          "process_vault",
+          "PocketAI research, eval, run, and learning vault",
+          "Project process artifacts live in `.pocketai/vault/`: QMD source/run/eval/learning files plus SQL schema/export files.",
+        );
+      } else if (normalizedAction === "source" || normalizedAction === "research") {
+        if (!rest) {
+          result = {
+            status: "Usage: /vault source <topic>",
+            transcript: "Usage: `/vault source <topic>`",
+          };
+        } else {
+          result = createSourcePacket(rootPath, rest);
+        }
+      } else if (normalizedAction === "run") {
+        if (!rest) {
+          result = {
+            status: "Usage: /vault run <objective>",
+            transcript: "Usage: `/vault run <objective>`",
+          };
+        } else {
+          result = createRunLog(rootPath, rest);
+        }
+      } else if (normalizedAction === "learn" || normalizedAction === "learning") {
+        result = appendVaultLearning(rootPath, rest);
+        if (rest) {
+          deps.memoryMgr?.upsert(
+            "project",
+            `vault_learning_${Date.now().toString(36)}`,
+            "Learning saved through the process vault",
+            rest,
+          );
+        }
+      } else if (normalizedAction === "open") {
+        ensureProcessVault(rootPath);
+        const filePath = resolveVaultOpenPath(rootPath, rest);
+        if (!filePath) {
+          result = {
+            status: "Usage: /vault open <readme|evals|learnings|schema|sql>",
+            transcript:
+              "Usage: `/vault open <readme|evals|learnings|schema|sql>`",
+          };
+        } else {
+          await vscode.window.showTextDocument(vscode.Uri.file(filePath), {
+            preview: false,
+          });
+          result = {
+            status: `Opened ${path.relative(rootPath, filePath).split(path.sep).join("/")}`,
+            transcript: `Opened \`${path.relative(rootPath, filePath).split(path.sep).join("/")}\`.`,
+            filePath,
+          };
+        }
+      } else {
+        result = {
+          status: "Usage: /vault [init|status|source|run|learn|open]",
+          transcript: [
+            "Usage: `/vault [init|status|source|run|learn|open]`",
+            "",
+            "- `/vault init` creates the QMD + SQL process vault",
+            "- `/vault source <topic>` creates a research packet template",
+            "- `/vault run <objective>` creates an eval-driven run log",
+            "- `/vault learn <text>` records a durable learning",
+            "- `/vault open <readme|evals|learnings|schema|sql>` opens a vault file",
+          ].join("\n"),
+        };
+      }
+
+      await applyProcessVaultResult(result);
+      return true;
+    }
+
+    case "/evals": {
+      const rootPath = getWorkspaceRoot();
+      if (!rootPath) {
+        session.status = "Project evals unavailable: no workspace folder is open.";
+        deps.postState();
+        return true;
+      }
+
+      const normalizedArg = arg.trim();
+      if (
+        !normalizedArg ||
+        normalizedArg === "show" ||
+        normalizedArg === "list" ||
+        normalizedArg === "status"
+      ) {
+        ensureProcessVault(rootPath);
+        const paths = getProcessVaultPaths(rootPath);
+        const raw = fs.readFileSync(paths.evalsFile, "utf-8");
+        const content =
+          raw.length > 12000
+            ? `${raw.slice(0, 12000)}\n\n... truncated ...`
+            : raw;
+        session.transcript.push({
+          role: "tool",
+          content: [
+            "Project evals:",
+            "",
+            `File: \`${path.relative(rootPath, paths.evalsFile).split(path.sep).join("/")}\``,
+            "",
+            "```qmd",
+            content,
+            "```",
+          ].join("\n"),
+        });
+        session.status = "Project evals ready.";
+        deps.sessionMgr.touchSession(session);
+        await deps.sessionMgr.saveState();
+        deps.postState();
+        return true;
+      }
+
+      const evalText = normalizedArg.replace(/^add\s+/i, "").trim();
+      const result = appendProjectEval(rootPath, evalText);
+      if (evalText) {
+        deps.memoryMgr?.upsert(
+          "project",
+          "project_evals",
+          "Project success evals",
+          `Project evals live in \`.pocketai/vault/evals.qmd\`. Latest eval: ${evalText}`,
+        );
+      }
+      await applyProcessVaultResult(result);
       return true;
     }
 
