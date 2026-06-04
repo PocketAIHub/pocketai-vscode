@@ -12,6 +12,7 @@ import { CLAUDE_BRIDGE_URL } from "./provider-constants";
 export const CLAUDE_BRIDGE_NAME = "Claude CLI Bridge";
 const CLAUDE_BRIDGE_ROOT_URL = `${CLAUDE_BRIDGE_URL}/`;
 const CLAUDE_BRIDGE_POLL_MS = 5000;
+const CLAUDE_BRIDGE_DEFAULT_MODEL = "claude-opus-4-8";
 
 export type ClaudeModelInfo = {
   id: string;
@@ -40,6 +41,20 @@ type CommandResult = {
   stderr: string;
   notFound: boolean;
 };
+
+function normalizeClaudeBridgeModel(model: string | undefined): string {
+  const trimmed = (model ?? "").trim();
+  if (
+    !trimmed ||
+    trimmed === "default" ||
+    trimmed === "opus" ||
+    trimmed === "claude-opus-4-6" ||
+    trimmed === "claude-opus-4-7"
+  ) {
+    return CLAUDE_BRIDGE_DEFAULT_MODEL;
+  }
+  return trimmed;
+}
 
 function defaultState(): ClaudeConnectionState {
   return {
@@ -393,7 +408,7 @@ export class ClaudeBridgeManager {
     if (existing) {
       existing.name = CLAUDE_BRIDGE_NAME;
       existing.url = CLAUDE_BRIDGE_URL;
-      existing.model = existing.model || "sonnet";
+      existing.model = normalizeClaudeBridgeModel(existing.model);
       existing.maxTokens = existing.maxTokens ?? 4096;
       existing.systemPrompt = existing.systemPrompt || defaultSystemPrompt;
       delete existing.apiKey;
@@ -402,7 +417,7 @@ export class ClaudeBridgeManager {
       endpoints.push({
         name: CLAUDE_BRIDGE_NAME,
         url: CLAUDE_BRIDGE_URL,
-        model: "sonnet",
+        model: CLAUDE_BRIDGE_DEFAULT_MODEL,
         reasoningEffort: "",
         maxTokens: 4096,
         systemPrompt: defaultSystemPrompt,

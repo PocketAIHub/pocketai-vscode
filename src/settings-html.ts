@@ -391,8 +391,8 @@ export function getSettingsHtml(nonce: string): string {
   <div class="codex-card collapsed" id="codexCard">
     <div class="codex-header" id="codexHeader">
       <div>
-        <div class="codex-title">Connect to Codex CLI</div>
-        <div class="codex-subtitle">Use your Codex CLI account right from PocketAI. We'll add the endpoint, start the bridge, and switch to it for you.</div>
+        <div class="codex-title">Connect to Codex</div>
+        <div class="codex-subtitle">Use your Codex CLI account through native app-server turns or the existing OpenAI-compatible bridge.</div>
       </div>
       <div class="codex-header-right">
         <span class="codex-badge ready" id="codexBadge">Checking...</span>
@@ -408,17 +408,20 @@ export function getSettingsHtml(nonce: string): string {
       <div class="codex-meta">
         <div class="codex-meta-row"><span>CLI</span><strong id="codexCliStatus">Checking...</strong></div>
         <div class="codex-meta-row"><span>Account</span><strong id="codexAccountStatus">Checking...</strong></div>
+        <div class="codex-meta-row"><span>App Server</span><strong id="codexAppServerStatus">Not started</strong></div>
         <div class="codex-meta-row"><span>Bridge</span><strong id="codexBridgeStatus">Not started</strong></div>
         <div class="codex-meta-row"><span>Endpoint</span><strong id="codexEndpointStatus">Not added yet</strong></div>
         <div class="codex-meta-row"><span>Usage</span><strong class="usage-value unknown" id="codexUsageStatus">Not checked</strong></div>
       </div>
       <div class="codex-actions">
-        <button class="codex-primary-btn" id="connectCodexBtn">Connect to Codex CLI</button>
+        <button class="codex-primary-btn" id="connectCodexAppServerBtn">Connect App Server</button>
+        <button class="codex-secondary-btn" id="connectCodexBtn">Connect CLI Bridge</button>
         <button class="codex-secondary-btn" id="signInCodexBtn">Sign In</button>
-        <button class="codex-secondary-btn" id="refreshCodexBtn">Refresh</button>
+        <button class="codex-secondary-btn" id="refreshCodexAppServerBtn">Refresh App</button>
+        <button class="codex-secondary-btn" id="refreshCodexBtn">Refresh Bridge</button>
         <button class="codex-secondary-btn" id="codexUsageBtn">Usage</button>
       </div>
-      <p class="hint">This keeps Codex chat-first inside PocketAI for now. Other endpoints can continue using their existing tool-call flow.</p>
+      <p class="hint">App Server is the new native Codex path. CLI Bridge remains available as the compatibility fallback.</p>
     </div>
   </div>
 
@@ -569,12 +572,15 @@ export function getSettingsHtml(nonce: string): string {
   const codexStatus = document.getElementById("codexStatus");
   const codexCliStatus = document.getElementById("codexCliStatus");
   const codexAccountStatus = document.getElementById("codexAccountStatus");
+  const codexAppServerStatus = document.getElementById("codexAppServerStatus");
   const codexBridgeStatus = document.getElementById("codexBridgeStatus");
   const codexEndpointStatus = document.getElementById("codexEndpointStatus");
   const codexUsageStatus = document.getElementById("codexUsageStatus");
   const codexReasoningSelect = document.getElementById("codexReasoningSelect");
+  const connectCodexAppServerBtn = document.getElementById("connectCodexAppServerBtn");
   const connectCodexBtn = document.getElementById("connectCodexBtn");
   const signInCodexBtn = document.getElementById("signInCodexBtn");
+  const refreshCodexAppServerBtn = document.getElementById("refreshCodexAppServerBtn");
   const refreshCodexBtn = document.getElementById("refreshCodexBtn");
   const codexUsageBtn = document.getElementById("codexUsageBtn");
   const claudeCard = document.getElementById("claudeCard");
@@ -675,6 +681,9 @@ export function getSettingsHtml(nonce: string): string {
   openChatBtn.addEventListener("click", () => {
     vscode.postMessage({ type: "openChat" });
   });
+  connectCodexAppServerBtn.addEventListener("click", () => {
+    vscode.postMessage({ type: "connectCodexAppServer" });
+  });
   connectCodexBtn.addEventListener("click", () => {
     vscode.postMessage({ type: "connectCodex" });
   });
@@ -683,6 +692,9 @@ export function getSettingsHtml(nonce: string): string {
   });
   refreshCodexBtn.addEventListener("click", () => {
     vscode.postMessage({ type: "refreshCodexStatus" });
+  });
+  refreshCodexAppServerBtn.addEventListener("click", () => {
+    vscode.postMessage({ type: "refreshCodexAppServerStatus" });
   });
   codexUsageBtn.addEventListener("click", () => {
     vscode.postMessage({ type: "refreshBridgeUsage", provider: "codex" });
@@ -848,25 +860,35 @@ export function getSettingsHtml(nonce: string): string {
   }
 
   function renderCodex(state) {
+    const codexApp = state.codexApp || {};
     const codex = state.codex || {};
     const models = Array.isArray(codex.models) ? codex.models : [];
+    const appModels = Array.isArray(codexApp.models) ? codexApp.models : [];
+    const appConnected = !!(codexApp.available && codexApp.loggedIn && codexApp.endpointActive && codexApp.endpointHealthy);
+    const appReady = !!(codexApp.available && codexApp.loggedIn && codexApp.bridgeRunning);
     const isConnected = !!(codex.available && codex.loggedIn && codex.endpointActive && codex.endpointHealthy);
     const isReady = !!(codex.available && codex.loggedIn && codex.bridgeRunning);
 
     let badgeLabel = "Connect";
     let badgeClass = "ready";
-    if (codex.busy) {
+    if (codexApp.busy || codex.busy) {
       badgeLabel = "Working";
       badgeClass = "ready";
+    } else if (appConnected) {
+      badgeLabel = "App Server";
+      badgeClass = "connected";
     } else if (isConnected) {
       badgeLabel = "Connected";
       badgeClass = "connected";
-    } else if (!codex.available) {
+    } else if (!codexApp.available && !codex.available) {
       badgeLabel = "Not Found";
       badgeClass = "offline";
-    } else if (!codex.loggedIn) {
+    } else if (!codexApp.loggedIn && !codex.loggedIn) {
       badgeLabel = "Sign In";
       badgeClass = "warning";
+    } else if (appReady) {
+      badgeLabel = "App Ready";
+      badgeClass = "ready";
     } else if (isReady) {
       badgeLabel = "Ready";
       badgeClass = "ready";
@@ -875,45 +897,67 @@ export function getSettingsHtml(nonce: string): string {
     codexBadge.textContent = badgeLabel;
     codexBadge.className = "codex-badge " + badgeClass;
 
-    const statusText = codex.status || "One click will add the endpoint and start Codex for you.";
+    const statusText = codexApp.status || codex.status || "Connect Codex App Server or the CLI Bridge to get started.";
     codexStatus.textContent = statusText;
-    codexStatus.className = "codex-status" + (codex.error ? " error" : "");
+    codexStatus.className = "codex-status" + ((codexApp.error || codex.error) ? " error" : "");
 
-    codexCliStatus.textContent = codex.available ? "Detected" : "Not found";
-    codexAccountStatus.textContent = codex.available
-      ? (codex.loginLabel || (codex.loggedIn ? "Logged in" : "Sign in required"))
+    const codexAvailable = !!(codexApp.available || codex.available);
+    const codexLoggedIn = !!(codexApp.loggedIn || codex.loggedIn);
+    codexCliStatus.textContent = codexAvailable ? "Detected" : "Not found";
+    codexAccountStatus.textContent = codexAvailable
+      ? (codexApp.loginLabel || codex.loginLabel || (codexLoggedIn ? "Logged in" : "Sign in required"))
       : "Unavailable";
+    codexAppServerStatus.textContent = codexApp.bridgeRunning
+      ? "Running natively"
+      : "Not started";
     codexBridgeStatus.textContent = codex.bridgeRunning
       ? "Running on 127.0.0.1:39458"
       : "Not started";
-    codexEndpointStatus.textContent = codex.endpointActive
-      ? (codex.endpointHealthy ? "Active and healthy" : "Active")
-      : codex.endpointConfigured
-        ? "Saved"
-        : "Not added yet";
+    codexEndpointStatus.textContent = codexApp.endpointActive
+      ? (codexApp.endpointHealthy ? "App Server active" : "App Server active")
+      : codex.endpointActive
+        ? (codex.endpointHealthy ? "Bridge active and healthy" : "Bridge active")
+        : codexApp.endpointConfigured
+          ? "App Server saved"
+          : codex.endpointConfigured
+            ? "Bridge saved"
+            : "Not added yet";
     renderUsageValue(codexUsageStatus, getUsageSummary(state.codexUsage, "Codex"));
+
+    connectCodexAppServerBtn.textContent = codexApp.busy
+      ? "Connecting..."
+      : appConnected && appModels.length > 0
+        ? "App Server Connected"
+        : "Connect App Server";
+    connectCodexAppServerBtn.disabled = !!codexApp.busy || (appConnected && appModels.length > 0) || !codexApp.available;
 
     connectCodexBtn.textContent = codex.busy
       ? "Connecting..."
       : isConnected && models.length > 0
-        ? "Connected"
-        : "Connect to Codex CLI";
+        ? "Bridge Connected"
+        : "Connect CLI Bridge";
     connectCodexBtn.disabled = !!codex.busy || (isConnected && models.length > 0) || !codex.available;
 
-    signInCodexBtn.style.display = codex.loggedIn ? "none" : "inline-flex";
-    signInCodexBtn.disabled = !!codex.busy || !codex.available;
+    signInCodexBtn.style.display = codexLoggedIn ? "none" : "inline-flex";
+    signInCodexBtn.disabled = !!(codexApp.busy || codex.busy) || !codexAvailable;
+    refreshCodexAppServerBtn.disabled = !!codexApp.busy;
     refreshCodexBtn.disabled = !!codex.busy;
     codexUsageBtn.disabled = !!codex.busy || !codex.bridgeRunning;
 
-    const reasoningOptions = Array.isArray(codex.reasoningOptions) ? codex.reasoningOptions : [];
+    const reasoningOptions = Array.isArray(codexApp.reasoningOptions) && codexApp.reasoningOptions.length
+      ? codexApp.reasoningOptions
+      : Array.isArray(codex.reasoningOptions) ? codex.reasoningOptions : [];
+    const selectedReasoning = codexApp.endpointActive
+      ? codexApp.selectedReasoningEffort
+      : codex.selectedReasoningEffort;
     let reasoningHtml = '<option value="">Auto</option>';
     for (const option of reasoningOptions) {
-      const selected = option === codex.selectedReasoningEffort ? " selected" : "";
+      const selected = option === selectedReasoning ? " selected" : "";
       reasoningHtml += '<option value="' + escapeHtml(option) + '"' + selected + '>' + escapeHtml(option) + '</option>';
     }
     codexReasoningSelect.innerHTML = reasoningHtml;
     codexReasoningSelect.disabled =
-      !!codex.busy || !codex.available || reasoningOptions.length === 0;
+      !!(codexApp.busy || codex.busy) || !codexAvailable || reasoningOptions.length === 0;
   }
 
   function renderClaude(state) {

@@ -13,7 +13,8 @@ import {
 const HOST = process.env.CLAUDE_BRIDGE_HOST || "127.0.0.1";
 const PORT = Number.parseInt(process.env.CLAUDE_BRIDGE_PORT || "39460", 10);
 const BRIDGE_CWD = process.env.CLAUDE_BRIDGE_CWD || process.cwd();
-const DEFAULT_MODEL = (process.env.CLAUDE_BRIDGE_MODEL || "sonnet").trim();
+const LATEST_OPUS_MODEL = "claude-opus-4-8";
+const DEFAULT_MODEL = (process.env.CLAUDE_BRIDGE_MODEL || LATEST_OPUS_MODEL).trim();
 const CLAUDE_BIN = process.env.CLAUDE_BRIDGE_CLAUDE_BIN || "claude";
 const VERBOSE = /^(1|true|yes)$/i.test(process.env.CLAUDE_BRIDGE_VERBOSE || "");
 
@@ -25,9 +26,14 @@ const BRIDGE_INFO = {
 
 const MODEL_DEFINITIONS = [
   {
+    id: LATEST_OPUS_MODEL,
+    display_name: "Claude Opus 4.8",
+    description: "Latest Opus model using an explicit Claude Code model ID.",
+  },
+  {
     id: "default",
     display_name: "default",
-    description: "Claude Code account-default model choice.",
+    description: "PocketAI's Claude bridge default model choice.",
   },
   {
     id: "sonnet",
@@ -37,7 +43,7 @@ const MODEL_DEFINITIONS = [
   {
     id: "opus",
     display_name: "opus",
-    description: "Highest-capability Opus model for deeper reasoning.",
+    description: "Latest Opus model for deeper reasoning.",
   },
   {
     id: "haiku",
@@ -50,6 +56,21 @@ const MODEL_DEFINITIONS = [
     description: "Claude Code hybrid planning mode alias.",
   },
 ];
+
+function resolveClaudeModelAlias(model) {
+  const trimmed = String(model || "").trim();
+  if (!trimmed || trimmed === "default") {
+    return DEFAULT_MODEL || LATEST_OPUS_MODEL;
+  }
+  if (
+    trimmed === "opus" ||
+    trimmed === "claude-opus-4-6" ||
+    trimmed === "claude-opus-4-7"
+  ) {
+    return LATEST_OPUS_MODEL;
+  }
+  return trimmed;
+}
 
 const BRIDGE_SYSTEM_INSTRUCTIONS = [
   "You are acting as an OpenAI-compatible chat completions backend for a third-party editor.",
@@ -380,7 +401,7 @@ async function handleModels(res) {
 async function handleStatus(res) {
   sendJson(res, 200, {
     ok: true,
-    defaultModelId: DEFAULT_MODEL || "sonnet",
+    defaultModelId: resolveClaudeModelAlias(DEFAULT_MODEL),
   });
 }
 
@@ -407,17 +428,18 @@ async function handleChatCompletions(req, res) {
   const model =
     typeof body.model === "string" && body.model.trim()
       ? body.model.trim()
-      : DEFAULT_MODEL || "sonnet";
+      : DEFAULT_MODEL || LATEST_OPUS_MODEL;
+  const resolvedModel = resolveClaudeModelAlias(model);
   const stream = Boolean(body.stream);
   const created = Math.floor(Date.now() / 1000);
   const responseId = `chatcmpl-${randomUUID()}`;
   const result = await runClaudeCompletion({
     prompt,
     systemPrompt,
-    model,
+    model: resolvedModel,
   });
   recordClaudeUsage(result.usage);
-  const responseModel = result.model || model;
+  const responseModel = result.model || resolvedModel || model;
   const extracted = extractStructuredToolCalls(result.text);
   const openAiToolCalls = toOpenAiToolCalls(
     extracted.toolCalls,

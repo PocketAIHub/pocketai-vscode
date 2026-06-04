@@ -12,7 +12,10 @@ import {
   getEndpointCapabilities,
   type EndpointCapabilities,
 } from "./provider-capabilities";
-import { LOCAL_POCKETAI_URL } from "./provider-constants";
+import {
+  CODEX_APP_SERVER_URL,
+  LOCAL_POCKETAI_URL,
+} from "./provider-constants";
 import {
   getOpenCodeGoChatModels,
   getOpenCodeGoHealthProbeInit,
@@ -45,6 +48,10 @@ const NON_CHAT_MODEL_PREFIXES = [
 ];
 
 const ACTIVE_ENDPOINT_STORAGE_KEY = "pocketai.activeEndpointUrl";
+
+function isCodexAppServerEndpoint(url: string): boolean {
+  return normalizeEndpointInputUrl(url) === normalizeEndpointInputUrl(CODEX_APP_SERVER_URL);
+}
 /**
  * Extract a numeric parameter size from a model ID (e.g. "qwen3.5-9b" → 9).
  * Returns Infinity if no size is found so unknowns sort to the end.
@@ -344,6 +351,13 @@ export class EndpointManager {
         const prevHealthy = health.healthy;
         const start = Date.now();
         const normalizedHealthUrl = normalizeEndpointInputUrl(health.url);
+        if (isCodexAppServerEndpoint(normalizedHealthUrl)) {
+          health.lastChecked = Date.now();
+          if (!health.healthy) {
+            health.error = health.error || "Start Codex App Server from settings";
+          }
+          continue;
+        }
         try {
           const resp = await fetch(`${normalizedHealthUrl}/v1/models`, {
             headers: { Authorization: `Bearer ${apiKey}` },
@@ -431,6 +445,32 @@ export class EndpointManager {
       );
       return sessionEndpointUrl === resolvedEndpointUrl;
     });
+
+    if (isCodexAppServerEndpoint(resolvedEndpointUrl)) {
+      const existingModels = this.modelsByEndpoint.get(resolvedEndpointUrl) ?? [];
+      const activeHealth = this.endpointHealthMap.get(resolvedEndpointUrl);
+      if (activeHealth) {
+        activeHealth.lastChecked = Date.now();
+        if (!activeHealth.healthy) {
+          activeHealth.error =
+            activeHealth.error || "Start Codex App Server from settings";
+        }
+      }
+      this.statusSummaryByEndpoint.set(
+        resolvedEndpointUrl,
+        existingModels.length
+          ? `OK — ${existingModels.length} Codex model(s)`
+          : "Codex App Server is managed by PocketAI settings.",
+      );
+      applyRefreshedModelsToSessions(
+        sessionsForEndpoint,
+        existingModels,
+        getPreferredModel,
+      );
+      this.syncActiveEndpointStateFromCache();
+      await saveState();
+      return;
+    }
 
     try {
       let nextStatusSummary = "checking...";

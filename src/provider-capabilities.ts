@@ -2,6 +2,7 @@ import { normalizeBaseUrl } from "./helpers";
 import { isOpenCodeGoEndpoint } from "./opencode-go";
 import {
   CLAUDE_BRIDGE_URL,
+  CODEX_APP_SERVER_URL,
   CODEX_BRIDGE_URL,
   CURSOR_BRIDGE_URL,
   LOCAL_POCKETAI_URL,
@@ -10,6 +11,7 @@ import {
 
 export type EndpointProviderKind =
   | "local-pocketai"
+  | "codex-app-server"
   | "codex-bridge"
   | "claude-bridge"
   | "cursor-bridge"
@@ -28,6 +30,9 @@ export type EndpointCapabilities = {
 
 export function getEndpointProviderKind(url: string): EndpointProviderKind {
   const normalizedUrl = normalizeBaseUrl(url);
+  if (normalizedUrl === normalizeBaseUrl(CODEX_APP_SERVER_URL)) {
+    return "codex-app-server";
+  }
   if (normalizedUrl === normalizeBaseUrl(CODEX_BRIDGE_URL)) {
     return "codex-bridge";
   }
@@ -59,9 +64,11 @@ export function getEndpointCapabilities(
     label: profile.label,
     description: profile.description,
     supportsStructuredTools:
-      structuredToolsEnabled,
-    supportsReasoningEffort: kind === "codex-bridge",
+      kind !== "codex-app-server" && structuredToolsEnabled,
+    supportsReasoningEffort:
+      kind === "codex-bridge" || kind === "codex-app-server",
     requiresBridgeBootstrap:
+      kind === "codex-app-server" ||
       kind === "codex-bridge" ||
       kind === "claude-bridge" ||
       kind === "cursor-bridge" ||
@@ -70,6 +77,7 @@ export function getEndpointCapabilities(
     // user-visible transcript for tiny chats, so use our local estimate for
     // context pressure instead of trusting the provider totals.
     usesReportedUsageForContext:
+      kind !== "codex-app-server" &&
       kind !== "codex-bridge" &&
       kind !== "claude-bridge" &&
       kind !== "cursor-bridge" &&
@@ -87,6 +95,11 @@ export function getEndpointProviderProfile(kind: EndpointProviderKind): {
       return {
         label: "Local LLM",
         description: "Local PocketAI-compatible endpoint",
+      };
+    case "codex-app-server":
+      return {
+        label: "Codex App Server",
+        description: "Native Codex app-server integration with streamed turns",
       };
     case "codex-bridge":
       return {

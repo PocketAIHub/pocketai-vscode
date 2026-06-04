@@ -20,6 +20,8 @@ export function buildStructuredToolBridgeInstructions(tools) {
   return [
     "[PocketAI Structured Tool Bridge]",
     "The editor provided OpenAI-compatible tools, but this bridge cannot invoke native function calls directly.",
+    "These PocketAI tools are the only supported way to inspect files, edit files, or run commands in this bridge.",
+    "Do not use or mention Codex-native shell, file, sandbox, /permissions, or approval controls.",
     "If a tool is needed, do not write prose or text-based @tool syntax.",
     `Instead emit exactly one JSON envelope using ${TOOL_CALL_START} and ${TOOL_CALL_END}.`,
     "Envelope shape:",

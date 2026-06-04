@@ -36,6 +36,8 @@ const BRIDGE_DEVELOPER_INSTRUCTIONS = [
   "You are acting as an OpenAI-compatible chat completions backend for a third-party editor.",
   "Reply with plain assistant text only, except when emitting PocketAI's text-based tool calls.",
   "Do not invoke Codex-native tools, shell commands, file edits, or approval flows directly.",
+  "Codex-native filesystem and shell permissions are intentionally restricted in this bridge. They are not the user's PocketAI editing permissions.",
+  "Never tell the user to change Codex sandbox, /permissions, approval policy, or workspace write access. If editing or inspection is needed, use PocketAI's provided tool protocol instead.",
   "If the upstream system prompt defines a text-based tool protocol, you may use that protocol in your response.",
   "Only use tool calls that are explicitly defined by the upstream PocketAI instructions.",
   "Do not claim you already executed a tool yourself; emit the tool call and let PocketAI run it.",
@@ -1105,6 +1107,8 @@ const server = http.createServer(async (req, res) => {
         version: BRIDGE_INFO.version,
         endpoints: ["/v1/models", "/v1/chat/completions", "/status", "/usage"],
         cwd: BRIDGE_CWD,
+        sandbox: SANDBOX_MODE,
+        approvalPolicy: APPROVAL_POLICY,
       });
       return;
     }

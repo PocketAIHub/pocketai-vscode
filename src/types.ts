@@ -331,6 +331,8 @@ export type ChatSession = {
   selectedModel: string;
   selectedReasoningEffort: string;
   selectedEndpoint: string;
+  codexAppServerThreadId?: string;
+  codexAppServerCwd?: string;
   worktreeRoot?: string;
   subagentDepth?: number;
   subagentReadonly?: boolean;

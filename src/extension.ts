@@ -47,6 +47,7 @@ import { TerminalManager } from "./terminal-manager";
 import { MemoryManager } from "./memory-manager";
 import { handleSlashCommand, type SlashCommandDeps } from "./slash-commands";
 import { setupChatMessageHandler, type MessageHandlerDeps } from "./message-handler";
+import { CodexAppServerManager } from "./codex-app-server-manager";
 import { CodexBridgeManager } from "./codex-bridge-manager";
 import { ClaudeBridgeManager } from "./claude-bridge-manager";
 import { CursorBridgeManager } from "./cursor-bridge-manager";
@@ -57,6 +58,7 @@ import {
 } from "./provider-chat-state";
 import {
   CLAUDE_BRIDGE_URL,
+  CODEX_APP_SERVER_URL,
   CODEX_BRIDGE_URL,
   CURSOR_BRIDGE_URL,
   LOCAL_POCKETAI_URL,
@@ -249,6 +251,7 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
   private readonly mcpManager: McpManager;
   private readonly inlineDiffMgr: InlineDiffManager;
   private readonly terminalMgr: TerminalManager;
+  private readonly codexAppServerMgr: CodexAppServerManager;
   private readonly codexBridgeMgr: CodexBridgeManager;
   private readonly claudeBridgeMgr: ClaudeBridgeManager;
   private readonly cursorBridgeMgr: CursorBridgeManager;
@@ -264,6 +267,7 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
     this.mcpManager = new McpManager(this.outputChannel);
     this.inlineDiffMgr = new InlineDiffManager(context);
     this.terminalMgr = new TerminalManager(this.outputChannel);
+    this.codexAppServerMgr = new CodexAppServerManager(context, this.outputChannel);
     this.codexBridgeMgr = new CodexBridgeManager(context, this.outputChannel);
     this.claudeBridgeMgr = new ClaudeBridgeManager(context, this.outputChannel);
     this.cursorBridgeMgr = new CursorBridgeManager(context, this.outputChannel);
@@ -336,6 +340,24 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
     // Auto-detect models on startup
     void this.refreshModels();
     this.connectMcpServers();
+    this.codexAppServerMgr.startPolling(
+      this.endpointMgr,
+      () => this.pushSettingsState(),
+      async (state) => {
+        const codexAppServerIsActive =
+          this.endpointMgr.getActiveEndpointCapabilities().kind ===
+          "codex-app-server";
+        if (
+          state.loggedIn &&
+          state.bridgeRunning &&
+          codexAppServerIsActive &&
+          (!state.endpointHealthy ||
+            this.endpointMgr.getEndpointModels(CODEX_APP_SERVER_URL).length === 0)
+        ) {
+          await this.refreshModels(CODEX_APP_SERVER_URL);
+        }
+      },
+    );
     this.codexBridgeMgr.startPolling(
       this.endpointMgr,
       () => this.pushSettingsState(),
@@ -408,6 +430,7 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
         }
       },
     );
+    void this.autoConnectConfiguredCodexAppServer();
     void this.autoConnectConfiguredCodexBridge();
     void this.autoConnectConfiguredClaudeBridge();
     void this.autoConnectConfiguredCursorBridge();
@@ -426,6 +449,7 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
     this.mcpManager.disposeAll();
     this.inlineDiffMgr.dispose();
     this.terminalMgr.dispose();
+    this.codexAppServerMgr.dispose();
     this.codexBridgeMgr.dispose();
     this.claudeBridgeMgr.dispose();
     this.cursorBridgeMgr.dispose();
@@ -618,7 +642,12 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
   }
 
   private hasBridgeEndpoint(
-    kind: "codex-bridge" | "claude-bridge" | "cursor-bridge" | "opencode-bridge",
+    kind:
+      | "codex-app-server"
+      | "codex-bridge"
+      | "claude-bridge"
+      | "cursor-bridge"
+      | "opencode-bridge",
   ): boolean {
     return this.endpointMgr
       .getEndpoints()
@@ -626,6 +655,29 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
         (endpoint) =>
           this.getEndpointCapabilities(endpoint.url).kind === kind,
       );
+  }
+
+  private async autoConnectConfiguredCodexAppServer() {
+    if (!this.hasBridgeEndpoint("codex-app-server")) return;
+
+    await this.codexAppServerMgr.autoConnectIfConfigured({
+      config: this.config,
+      endpointMgr: this.endpointMgr,
+      defaultSystemPrompt: DEFAULT_SYSTEM_PROMPT,
+      workspaceRoot: this.getWorkspaceRoot(),
+    });
+
+    this.startEndpointHealthChecks();
+    if (
+      this.endpointMgr.getActiveEndpointCapabilities().kind ===
+      "codex-app-server"
+    ) {
+      await this.refreshModels(CODEX_APP_SERVER_URL);
+      return;
+    }
+    this.pushSettingsState();
+    this.postState();
+    this.updateStatusBar();
   }
 
   private async autoConnectConfiguredCodexBridge() {
@@ -731,6 +783,10 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
     await this.sessionMgr.saveState();
 
     const providerKind = this.getEndpointCapabilities(resolvedEndpointUrl).kind;
+    if (providerKind === "codex-app-server") {
+      await this.autoConnectConfiguredCodexAppServer();
+      return;
+    }
     if (providerKind === "codex-bridge") {
       await this.autoConnectConfiguredCodexBridge();
       return;
@@ -748,6 +804,20 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
       return;
     }
     await this.refreshModels(resolvedEndpointUrl);
+  }
+
+  private async selectSidebarSessionEndpoint(endpointUrl: string) {
+    const session = this.sessionMgr.requireSession(this.sessionMgr.sidebarSessionId);
+    if (!session) return;
+    const resolvedEndpointUrl = this.endpointMgr.getResolvedEndpointUrl(endpointUrl);
+    session.selectedEndpoint = resolvedEndpointUrl;
+    const models = this.endpointMgr.getEndpointModels(resolvedEndpointUrl);
+    if (!session.selectedModel || !models.includes(session.selectedModel)) {
+      session.selectedModel = this.sessionMgr.getPreferredModel(models);
+    }
+    this.sessionMgr.touchSession(session);
+    await this.sessionMgr.saveState();
+    this.postState();
   }
 
   private getBridgeUsagePollEndpoints(): string[] {
@@ -1176,7 +1246,9 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
             this.pushSettingsState();
             this.updateStatusBar();
             const providerKind = this.getEndpointCapabilities(url).kind;
-            if (providerKind === "codex-bridge") {
+            if (providerKind === "codex-app-server") {
+              void this.autoConnectConfiguredCodexAppServer();
+            } else if (providerKind === "codex-bridge") {
               void this.autoConnectConfiguredCodexBridge();
             } else if (providerKind === "claude-bridge") {
               void this.autoConnectConfiguredClaudeBridge();
@@ -1223,12 +1295,50 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
           case "setActiveEndpoint": {
             const endpointUrl = normalizeEndpointInputUrl(String(message.url || ""));
             this.endpointMgr.switchEndpoint(endpointUrl);
+            if (this.getEndpointCapabilities(endpointUrl).kind === "codex-app-server") {
+              await this.autoConnectConfiguredCodexAppServer();
+              break;
+            }
             await this.refreshModels(endpointUrl);
             break;
           }
           case "refreshEndpoints": {
             this.startEndpointHealthChecks();
             setTimeout(() => this.pushSettingsState(), 2000);
+            break;
+          }
+          case "connectCodexAppServer": {
+            try {
+              const state = await this.codexAppServerMgr.connect({
+                config: this.config,
+                endpointMgr: this.endpointMgr,
+                defaultSystemPrompt: DEFAULT_SYSTEM_PROMPT,
+                workspaceRoot: this.getWorkspaceRoot(),
+              });
+              this.startEndpointHealthChecks();
+              this.pushSettingsState();
+              this.postState();
+              this.updateStatusBar();
+
+              if (state.loggedIn) {
+                void vscode.window.showInformationMessage(
+                  "Codex App Server connected. PocketAI is now using native Codex turns.",
+                );
+                await this.refreshModels(CODEX_APP_SERVER_URL);
+                await this.selectSidebarSessionEndpoint(CODEX_APP_SERVER_URL);
+              } else {
+                void vscode.window.showInformationMessage(
+                  "Finish signing in to Codex in the terminal we opened. PocketAI will connect automatically when sign-in finishes.",
+                );
+              }
+            } catch (error) {
+              void vscode.window.showErrorMessage(
+                error instanceof Error
+                  ? error.message
+                  : "Failed to connect Codex App Server.",
+              );
+              this.pushSettingsState();
+            }
             break;
           }
           case "connectCodex": {
@@ -1369,6 +1479,7 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
                 this.getWorkspaceRoot(),
                 this.endpointMgr,
               );
+              await this.codexAppServerMgr.refresh(this.endpointMgr);
               this.pushSettingsState();
               void vscode.window.showInformationMessage(
                 "A terminal was opened for Codex sign-in. Finish the login flow there, then PocketAI will refresh automatically.",
@@ -1439,6 +1550,11 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
             }
             break;
           }
+          case "refreshCodexAppServerStatus": {
+            await this.codexAppServerMgr.refresh(this.endpointMgr);
+            this.pushSettingsState();
+            break;
+          }
           case "refreshCodexStatus": {
             await this.codexBridgeMgr.refresh(this.endpointMgr);
             this.pushSettingsState();
@@ -1480,9 +1596,14 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
           }
           case "updateCodexReasoning": {
             const endpoints = this.endpointMgr.getConfiguredEndpoints();
+            const activeKind = this.endpointMgr.getActiveEndpointCapabilities().kind;
+            const targetUrl =
+              activeKind === "codex-app-server"
+                ? CODEX_APP_SERVER_URL
+                : CODEX_BRIDGE_URL;
             const codexEndpoint = endpoints.find(
               (endpoint) =>
-                normalizeBaseUrl(endpoint.url) === normalizeBaseUrl(CODEX_BRIDGE_URL),
+                normalizeBaseUrl(endpoint.url) === normalizeBaseUrl(targetUrl),
             );
             if (!codexEndpoint) break;
 
@@ -1542,6 +1663,7 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
     this.endpointMgr.initEndpoints();
     const activeEndpointUrl = this.endpointMgr.getResolvedActiveEndpointUrl();
     const endpointsState = this.endpointMgr.getEndpoints();
+    const codexAppState = this.codexAppServerMgr.getState(this.endpointMgr);
     const codexState = this.codexBridgeMgr.getState(this.endpointMgr);
     const claudeState = this.claudeBridgeMgr.getState(this.endpointMgr);
     const cursorState = this.cursorBridgeMgr.getState(this.endpointMgr);
@@ -1550,6 +1672,11 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
       selectedModel: codexState.selectedModel,
       selectedReasoningEffort: codexState.selectedReasoningEffort,
       codexState,
+    });
+    const codexAppReasoningControls = buildCodexReasoningControlsState({
+      selectedModel: codexAppState.selectedModel,
+      selectedReasoningEffort: codexAppState.selectedReasoningEffort,
+      codexState: codexAppState,
     });
     const endpoints = Array.from(
       this.endpointMgr.endpointHealthMap.values(),
@@ -1584,6 +1711,12 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
           this.config.get<boolean>("includeWorkspaceContext") ?? true,
       },
       models: this.endpointMgr.models,
+      codexApp: {
+        ...codexAppState,
+        selectedReasoningEffort:
+          codexAppReasoningControls.selectedReasoningEffort,
+        reasoningOptions: codexAppReasoningControls.reasoningOptions,
+      },
       codex: {
         ...codexState,
         selectedReasoningEffort:
@@ -1691,14 +1824,26 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
 
     session.currentRequest = new AbortController();
     clearReadTracking();
-    this.outputChannel.appendLine(
-      `→ ${this.endpointMgr.getResolvedEndpointUrl(session.selectedEndpoint)}/v1/chat/completions [${session.selectedModel}]`,
-    );
+    const providerKind = this.getSessionEndpointCapabilities(session).kind;
+    if (providerKind === "codex-app-server") {
+      this.outputChannel.appendLine(
+        `→ Codex App Server [${session.selectedModel || "auto"}]`,
+      );
+    } else {
+      this.outputChannel.appendLine(
+        `→ ${this.endpointMgr.getResolvedEndpointUrl(session.selectedEndpoint)}/v1/chat/completions [${session.selectedModel}]`,
+      );
+    }
 
     try {
-      loopResult = await runToolLoop(session, this.getToolLoopDeps(session));
-      session.status =
-        getPostLoopReadyStatus(loopResult.stoppedBecause) ?? session.status;
+      if (providerKind === "codex-app-server") {
+        await this.runCodexAppServerTurn(session);
+        session.status = "Ready";
+      } else {
+        loopResult = await runToolLoop(session, this.getToolLoopDeps(session));
+        session.status =
+          getPostLoopReadyStatus(loopResult.stoppedBecause) ?? session.status;
+      }
       this.outputChannel.appendLine(
         `← Response received [${session.id}]`,
       );
@@ -1733,6 +1878,23 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
         { post: true },
       );
     }
+  }
+
+  private async runCodexAppServerTurn(
+    session: NonNullable<ReturnType<SessionManager["requireSession"]>>,
+  ) {
+    const workspaceContext = await buildWorkspaceContext(this.config, session);
+    const result = await this.codexAppServerMgr.streamAssistantTurn({
+      session,
+      streamingDeps: this.getStreamingDeps(session),
+      workspaceContext,
+      workspaceRoot: getSessionWorkspaceRoot(session) || this.getWorkspaceRoot(),
+    });
+    const content = result.text.trim();
+    session.transcript.push({
+      role: "assistant",
+      content: content || "_Codex completed without text._",
+    });
   }
 
   private getSlashCommandDeps(): SlashCommandDeps {
@@ -2248,9 +2410,12 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
     const endpointCapabilities = this.endpointMgr.getEndpointCapabilities(
       selectedEndpointUrl,
     );
-    const codexState = endpointCapabilities.kind === "codex-bridge"
-      ? this.codexBridgeMgr.getState(this.endpointMgr)
-      : undefined;
+    const codexState =
+      endpointCapabilities.kind === "codex-app-server"
+        ? this.codexAppServerMgr.getState(this.endpointMgr)
+        : endpointCapabilities.kind === "codex-bridge"
+          ? this.codexBridgeMgr.getState(this.endpointMgr)
+          : undefined;
     const modelControls = buildProviderChatControlsState({
       endpointUrl: selectedEndpointUrl,
       structuredToolsEnabled:
