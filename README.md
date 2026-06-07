@@ -88,6 +88,35 @@ Notes:
 - The bridge runs Claude in print mode with Claude-native tools disabled and slash commands turned off, so the experience stays consistent with PocketAI's own harness.
 - If you want Claude to use a different workspace root, you can still launch the bridge manually with `CLAUDE_BRIDGE_CWD=/path/to/project npm run claude-bridge`.
 
+## Using DeepSeek API
+
+PocketAI includes a built-in **Connect to DeepSeek API** section in the settings sidebar.
+
+1. Open the PocketAI sidebar
+2. In the settings view, paste your DeepSeek API key and click **Save Key**
+3. Click **Connect to DeepSeek**
+4. Pick `deepseek-v4-pro` or `deepseek-v4-flash` from the model selector
+
+What this setup does for you:
+
+- Adds a `DeepSeek API Bridge` endpoint at `http://127.0.0.1:39464`
+- Starts a local OpenAI-compatible proxy to `https://api.deepseek.com`
+- Stores the API key in VS Code secret storage
+- Keeps PocketAI in charge of tool execution while DeepSeek provides model responses
+
+Manual fallback:
+
+```bash
+export DEEPSEEK_API_KEY="sk-..."
+npm run deepseek-bridge
+```
+
+Notes:
+
+- The bridge exposes DeepSeek V4 model IDs: `deepseek-v4-pro` and `deepseek-v4-flash`.
+- Reasoning controls are available as `high` and `max`; when selected, the bridge enables DeepSeek thinking mode for the request.
+- The bridge uses port `39464` to avoid the existing Hermes bridge on `39463`.
+
 ## Features
 
 ### Agentic Tool Loop

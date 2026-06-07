@@ -8,6 +8,7 @@ import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import process from "node:process";
 import readline from "node:readline";
+import { pathToFileURL } from "node:url";
 import {
   buildStructuredToolBridgeInstructions,
   extractStructuredToolCalls,
@@ -22,12 +23,19 @@ const DEFAULT_REASONING_EFFORT = (process.env.CODEX_BRIDGE_REASONING || "").trim
 const SANDBOX_MODE = process.env.CODEX_BRIDGE_SANDBOX || "read-only";
 const CODEX_BIN = process.env.CODEX_BRIDGE_CODEX_BIN || "codex";
 const VERBOSE = /^(1|true|yes)$/i.test(process.env.CODEX_BRIDGE_VERBOSE || "");
+const IS_MAIN = process.argv[1]
+  ? import.meta.url === pathToFileURL(process.argv[1]).href
+  : false;
 
 const CACHE_TTL_MS = 15_000;
 const BRIDGE_INFO = {
   name: "pocketai-codex-bridge",
   title: "PocketAI Codex Bridge",
-  version: "0.1.0",
+  version: "0.2.0",
+};
+const BRIDGE_CAPABILITIES = {
+  streamingChatCompletions: true,
+  imageInput: true,
 };
 
 const APPROVAL_POLICY = "never";
@@ -100,6 +108,16 @@ function normalizeText(text) {
   return String(text || "").replace(/\r\n/g, "\n").trim();
 }
 
+function getImageUrlFromPart(part) {
+  if (!part || typeof part !== "object") return "";
+
+  if (typeof part.image_url === "string") return part.image_url;
+  if (typeof part.image_url?.url === "string") return part.image_url.url;
+  if (typeof part.url === "string") return part.url;
+
+  return "";
+}
+
 function contentToTextAndImages(content) {
   if (typeof content === "string") {
     return { text: normalizeText(content), imageUrls: [], sawImage: false };
@@ -116,14 +134,21 @@ function contentToTextAndImages(content) {
   for (const part of content) {
     if (!part || typeof part !== "object") continue;
 
-    if (part.type === "text" && typeof part.text === "string") {
+    if (
+      (part.type === "text" || part.type === "input_text") &&
+      typeof part.text === "string"
+    ) {
       parts.push(part.text);
       continue;
     }
 
-    if (part.type === "image_url") {
+    if (
+      part.type === "image_url" ||
+      part.type === "input_image" ||
+      part.type === "image"
+    ) {
       sawImage = true;
-      const url = part.image_url?.url;
+      const url = getImageUrlFromPart(part);
       if (typeof url === "string" && url.trim()) {
         imageUrls.push(url.trim());
       }
@@ -177,7 +202,11 @@ function buildCodexPrompt(messages, tools) {
 
   const input = [
     { type: "text", text: promptText, text_elements: [] },
-    ...lastUserImages.map((url) => ({ type: "image", url })),
+    ...lastUserImages.map((url) => ({
+      type: "image",
+      url,
+      detail: "high",
+    })),
   ];
 
   return {
@@ -185,6 +214,21 @@ function buildCodexPrompt(messages, tools) {
     input,
   };
 }
+
+function createBridgeInfoPayload() {
+  return {
+    ok: true,
+    name: BRIDGE_INFO.name,
+    version: BRIDGE_INFO.version,
+    capabilities: BRIDGE_CAPABILITIES,
+    endpoints: ["/v1/models", "/v1/chat/completions", "/status", "/usage", "/codex/meta"],
+    cwd: BRIDGE_CWD,
+    sandbox: SANDBOX_MODE,
+    approvalPolicy: APPROVAL_POLICY,
+  };
+}
+
+export { buildCodexPrompt, contentToTextAndImages, createBridgeInfoPayload };
 
 function mapUsage(tokenUsage) {
   const last = firstDefined(
@@ -1101,15 +1145,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "GET" && url.pathname === "/") {
-      sendJson(res, 200, {
-        ok: true,
-        name: BRIDGE_INFO.name,
-        version: BRIDGE_INFO.version,
-        endpoints: ["/v1/models", "/v1/chat/completions", "/status", "/usage"],
-        cwd: BRIDGE_CWD,
-        sandbox: SANDBOX_MODE,
-        approvalPolicy: APPROVAL_POLICY,
-      });
+      sendJson(res, 200, createBridgeInfoPayload());
       return;
     }
 
@@ -1155,14 +1191,16 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, HOST, () => {
-  log(`listening on http://${HOST}:${PORT}`);
-  log(`using cwd=${BRIDGE_CWD}`);
-  if (DEFAULT_MODEL) log(`default model=${DEFAULT_MODEL}`);
-});
-
-for (const signal of ["SIGINT", "SIGTERM"]) {
-  process.on(signal, () => {
-    server.close(() => process.exit(0));
+if (IS_MAIN) {
+  server.listen(PORT, HOST, () => {
+    log(`listening on http://${HOST}:${PORT}`);
+    log(`using cwd=${BRIDGE_CWD}`);
+    if (DEFAULT_MODEL) log(`default model=${DEFAULT_MODEL}`);
   });
+
+  for (const signal of ["SIGINT", "SIGTERM"]) {
+    process.on(signal, () => {
+      server.close(() => process.exit(0));
+    });
+  }
 }

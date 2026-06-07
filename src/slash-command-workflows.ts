@@ -233,7 +233,8 @@ export function buildUsageSlashReport(options: {
     options.providerKind !== "codex-bridge" &&
     options.providerKind !== "claude-bridge" &&
     options.providerKind !== "cursor-bridge" &&
-    options.providerKind !== "opencode-bridge"
+    options.providerKind !== "opencode-bridge" &&
+    options.providerKind !== "deepseek-bridge"
   ) {
     lines.push(
       "",

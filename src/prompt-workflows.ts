@@ -125,7 +125,8 @@ function buildBridgeToolDisciplinePrompt(
     providerKind !== "codex-bridge" &&
     providerKind !== "claude-bridge" &&
     providerKind !== "cursor-bridge" &&
-    providerKind !== "opencode-bridge"
+    providerKind !== "opencode-bridge" &&
+    providerKind !== "deepseek-bridge"
   ) {
     return undefined;
   }

@@ -5,6 +5,7 @@ import {
   CODEX_APP_SERVER_URL,
   CODEX_BRIDGE_URL,
   CURSOR_BRIDGE_URL,
+  DEEPSEEK_BRIDGE_URL,
   LOCAL_POCKETAI_URL,
   OPENCODE_BRIDGE_URL,
 } from "./provider-constants";
@@ -16,6 +17,7 @@ export type EndpointProviderKind =
   | "claude-bridge"
   | "cursor-bridge"
   | "opencode-bridge"
+  | "deepseek-bridge"
   | "openai-compatible";
 
 export type EndpointCapabilities = {
@@ -45,6 +47,9 @@ export function getEndpointProviderKind(url: string): EndpointProviderKind {
   if (normalizedUrl === normalizeBaseUrl(OPENCODE_BRIDGE_URL)) {
     return "opencode-bridge";
   }
+  if (normalizedUrl === normalizeBaseUrl(DEEPSEEK_BRIDGE_URL)) {
+    return "deepseek-bridge";
+  }
   if (normalizedUrl === normalizeBaseUrl(LOCAL_POCKETAI_URL)) {
     return "local-pocketai";
   }
@@ -66,13 +71,16 @@ export function getEndpointCapabilities(
     supportsStructuredTools:
       kind !== "codex-app-server" && structuredToolsEnabled,
     supportsReasoningEffort:
-      kind === "codex-bridge" || kind === "codex-app-server",
+      kind === "codex-bridge" ||
+      kind === "codex-app-server" ||
+      kind === "deepseek-bridge",
     requiresBridgeBootstrap:
       kind === "codex-app-server" ||
       kind === "codex-bridge" ||
       kind === "claude-bridge" ||
       kind === "cursor-bridge" ||
-      kind === "opencode-bridge",
+      kind === "opencode-bridge" ||
+      kind === "deepseek-bridge",
     // OpenCode Go reports usage in a way that can look much larger than the
     // user-visible transcript for tiny chats, so use our local estimate for
     // context pressure instead of trusting the provider totals.
@@ -82,6 +90,7 @@ export function getEndpointCapabilities(
       kind !== "claude-bridge" &&
       kind !== "cursor-bridge" &&
       kind !== "opencode-bridge" &&
+      kind !== "deepseek-bridge" &&
       !isOpenCodeGoEndpoint(url),
   };
 }
@@ -120,6 +129,11 @@ export function getEndpointProviderProfile(kind: EndpointProviderKind): {
       return {
         label: "OpenCode Bridge",
         description: "OpenCode bridge endpoint with provider/model controls",
+      };
+    case "deepseek-bridge":
+      return {
+        label: "DeepSeek Bridge",
+        description: "DeepSeek V4 API bridge with provider/model controls",
       };
     case "openai-compatible":
     default:

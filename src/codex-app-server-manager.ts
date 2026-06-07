@@ -225,6 +225,7 @@ function buildTurnInput(options: {
     input.push({
       type: "image",
       url: `data:${image.mimeType};base64,${image.data}`,
+      detail: "high",
     });
   }
 

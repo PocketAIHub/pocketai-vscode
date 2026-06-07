@@ -4,3 +4,4 @@ export const CODEX_APP_SERVER_URL = "pocketai://codex-app-server";
 export const CLAUDE_BRIDGE_URL = "http://127.0.0.1:39460";
 export const CURSOR_BRIDGE_URL = "http://127.0.0.1:39461";
 export const OPENCODE_BRIDGE_URL = "http://127.0.0.1:39462";
+export const DEEPSEEK_BRIDGE_URL = "http://127.0.0.1:39464";

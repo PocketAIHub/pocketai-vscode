@@ -3278,7 +3278,8 @@ export function getChatScript(brandIconUri: string): string {
         kind === "codex-bridge" ||
         kind === "claude-bridge" ||
         kind === "cursor-bridge" ||
-        kind === "opencode-bridge";
+        kind === "opencode-bridge" ||
+        kind === "deepseek-bridge";
       if (!isBridge) return null;
 
       const providerName =
@@ -3288,7 +3289,9 @@ export function getChatScript(brandIconUri: string): string {
             ? "Claude"
             : kind === "cursor-bridge"
               ? "Cursor"
-              : "OpenCode";
+              : kind === "opencode-bridge"
+                ? "OpenCode"
+                : "DeepSeek";
       const usageState = payload.bridgeUsage || {};
       const usage = usageState.usage || {};
       const limits = Array.isArray(usage.limits) ? usage.limits : [];

@@ -13,6 +13,9 @@ export const CODEX_BRIDGE_NAME = "Codex CLI Bridge";
 const CODEX_BRIDGE_ROOT_URL = `${CODEX_BRIDGE_URL}/`;
 const CODEX_BRIDGE_META_URL = `${CODEX_BRIDGE_URL}/codex/meta`;
 const CODEX_BRIDGE_POLL_MS = 5000;
+const CODEX_BRIDGE_PORT = new URL(CODEX_BRIDGE_URL).port || "39458";
+const CODEX_BRIDGE_STALE_MESSAGE =
+  "An older Codex bridge is already running on 127.0.0.1:39458 without image support. Restart it once, then connect Codex again.";
 
 export type CodexReasoningOption = {
   reasoningEffort: string;
@@ -51,6 +54,20 @@ type CommandResult = {
   stdout: string;
   stderr: string;
   notFound: boolean;
+};
+
+type BridgeRootPayload = {
+  name?: string;
+  version?: string;
+  capabilities?: {
+    imageInput?: boolean;
+  };
+};
+
+type BridgeProbe = {
+  responsive: boolean;
+  compatible: boolean;
+  payload?: BridgeRootPayload;
 };
 
 function defaultState(): CodexConnectionState {
@@ -117,7 +134,8 @@ export class CodexBridgeManager {
       const login = available
         ? await this.getLoginStatus()
         : { loggedIn: false, label: "Codex CLI not found" };
-      const bridgeRunning = await this.isBridgeResponsive();
+      const bridgeProbe = await this.getBridgeProbe();
+      const bridgeRunning = bridgeProbe.compatible;
       const models = bridgeRunning
         ? await this.getBridgeModels()
         : [];
@@ -353,12 +371,22 @@ export class CodexBridgeManager {
   }
 
   private async ensureBridgeRunning(workspaceRoot: string) {
-    if (await this.isBridgeResponsive()) {
+    const existingBridge = await this.getBridgeProbe();
+    if (existingBridge.compatible) {
       const models = await this.getBridgeModels();
       if (models.length > 0) return;
       throw new Error(
         "An older Codex bridge is already running on 127.0.0.1:39458. Restart it once to enable model and reasoning controls.",
       );
+    }
+    if (existingBridge.responsive) {
+      this.outputChannel.appendLine(
+        "[Codex CLI Bridge] Restarting stale Codex bridge without image support.",
+      );
+      const stopped = await this.stopStaleBridgeOnPort();
+      if (!stopped || (await this.getBridgeProbe()).responsive) {
+        throw new Error(CODEX_BRIDGE_STALE_MESSAGE);
+      }
     }
 
     if (this.bridgeProcess && this.bridgeProcess.exitCode === null) {
@@ -407,7 +435,7 @@ export class CodexBridgeManager {
 
     const deadline = Date.now() + 10000;
     while (Date.now() < deadline) {
-      if (await this.isBridgeResponsive()) return;
+      if ((await this.getBridgeProbe()).compatible) return;
       if (this.bridgeProcess?.exitCode !== null && this.bridgeProcess?.exitCode !== undefined) {
         break;
       }
@@ -419,16 +447,82 @@ export class CodexBridgeManager {
     );
   }
 
-  private async isBridgeResponsive(): Promise<boolean> {
+  private async getBridgeProbe(): Promise<BridgeProbe> {
     try {
       const response = await fetch(CODEX_BRIDGE_ROOT_URL, {
         signal: AbortSignal.timeout(1500),
       });
-      if (!response.ok) return false;
-      const payload = (await response.json()) as { name?: string };
-      return payload.name === "pocketai-codex-bridge";
+      if (!response.ok) {
+        return { responsive: false, compatible: false };
+      }
+      const payload = (await response.json()) as BridgeRootPayload;
+      const responsive = payload.name === "pocketai-codex-bridge";
+      return {
+        responsive,
+        compatible: responsive && payload.capabilities?.imageInput === true,
+        payload,
+      };
     } catch {
+      return { responsive: false, compatible: false };
+    }
+  }
+
+  private async stopStaleBridgeOnPort(): Promise<boolean> {
+    if (this.bridgeProcess && this.bridgeProcess.exitCode === null) {
+      this.bridgeProcess.kill("SIGTERM");
+      this.bridgeProcess = undefined;
+      await this.waitForBridgeToStop();
+      return !(await this.getBridgeProbe()).responsive;
+    }
+
+    if (process.platform === "win32") {
       return false;
+    }
+
+    const pidResult = await this.runCommand(
+      "lsof",
+      ["-ti", `tcp:${CODEX_BRIDGE_PORT}`, "-sTCP:LISTEN"],
+      2500,
+    );
+    const pids = pidResult.stdout
+      .split(/\s+/)
+      .map((pid) => pid.trim())
+      .filter((pid) => /^\d+$/.test(pid));
+
+    if (!pids.length) {
+      return false;
+    }
+
+    let stoppedAny = false;
+    for (const pid of pids) {
+      const commandResult = await this.runCommand(
+        "ps",
+        ["-p", pid, "-o", "command="],
+        2500,
+      );
+      const command = commandResult.stdout.trim();
+      if (!command.includes("codex-openai-bridge.mjs")) {
+        continue;
+      }
+
+      const killResult = await this.runCommand("kill", [pid], 2500);
+      if (killResult.exitCode === 0) {
+        stoppedAny = true;
+      }
+    }
+
+    if (stoppedAny) {
+      await this.waitForBridgeToStop();
+    }
+
+    return stoppedAny;
+  }
+
+  private async waitForBridgeToStop(): Promise<void> {
+    const deadline = Date.now() + 3000;
+    while (Date.now() < deadline) {
+      if (!(await this.getBridgeProbe()).responsive) return;
+      await new Promise((resolve) => setTimeout(resolve, 150));
     }
   }
 

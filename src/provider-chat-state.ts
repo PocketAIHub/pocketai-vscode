@@ -21,6 +21,24 @@ export type ProviderReasoningControlsState = {
   reasoningOptions: string[];
 };
 
+const DEEPSEEK_REASONING_OPTIONS = ["high", "max"];
+
+function buildFixedReasoningControlsState(options: {
+  selectedReasoningEffort: string;
+  reasoningOptions: string[];
+}): ProviderReasoningControlsState {
+  const selectedReasoningEffort =
+    options.selectedReasoningEffort &&
+    options.reasoningOptions.includes(options.selectedReasoningEffort)
+      ? options.selectedReasoningEffort
+      : "";
+
+  return {
+    selectedReasoningEffort,
+    reasoningOptions: options.reasoningOptions,
+  };
+}
+
 export function buildCodexReasoningControlsState(options: {
   selectedModel: string;
   selectedReasoningEffort: string;
@@ -72,6 +90,18 @@ export function buildProviderChatControlsState(options: {
     showReasoningControl: capabilities.supportsReasoningEffort,
     reasoningOptions: [],
   };
+
+  if (capabilities.kind === "deepseek-bridge") {
+    const reasoningControls = buildFixedReasoningControlsState({
+      selectedReasoningEffort: options.session.selectedReasoningEffort,
+      reasoningOptions: DEEPSEEK_REASONING_OPTIONS,
+    });
+    return {
+      ...baseState,
+      selectedReasoningEffort: reasoningControls.selectedReasoningEffort,
+      reasoningOptions: reasoningControls.reasoningOptions,
+    };
+  }
 
   if (!capabilities.supportsReasoningEffort || !options.codexState) {
     return baseState;

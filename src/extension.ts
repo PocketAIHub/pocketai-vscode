@@ -52,6 +52,7 @@ import { CodexBridgeManager } from "./codex-bridge-manager";
 import { ClaudeBridgeManager } from "./claude-bridge-manager";
 import { CursorBridgeManager } from "./cursor-bridge-manager";
 import { OpenCodeBridgeManager } from "./opencode-bridge-manager";
+import { DeepSeekBridgeManager } from "./deepseek-bridge-manager";
 import {
   buildCodexReasoningControlsState,
   buildProviderChatControlsState,
@@ -61,6 +62,7 @@ import {
   CODEX_APP_SERVER_URL,
   CODEX_BRIDGE_URL,
   CURSOR_BRIDGE_URL,
+  DEEPSEEK_BRIDGE_URL,
   LOCAL_POCKETAI_URL,
   OPENCODE_BRIDGE_URL,
 } from "./provider-constants";
@@ -256,6 +258,7 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
   private readonly claudeBridgeMgr: ClaudeBridgeManager;
   private readonly cursorBridgeMgr: CursorBridgeManager;
   private readonly opencodeBridgeMgr: OpenCodeBridgeManager;
+  private readonly deepseekBridgeMgr: DeepSeekBridgeManager;
   private readonly bridgeUsageByEndpoint = new Map<string, BridgeUsageState>();
   private bridgeUsageTimer?: ReturnType<typeof setInterval>;
   private memoryMgr?: MemoryManager;
@@ -272,6 +275,7 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
     this.claudeBridgeMgr = new ClaudeBridgeManager(context, this.outputChannel);
     this.cursorBridgeMgr = new CursorBridgeManager(context, this.outputChannel);
     this.opencodeBridgeMgr = new OpenCodeBridgeManager(context, this.outputChannel);
+    this.deepseekBridgeMgr = new DeepSeekBridgeManager(context, this.outputChannel);
     context.subscriptions.push(
       subscribeToCommandTasks((task) => this.handleBackgroundTaskUpdate(task)),
     );
@@ -430,11 +434,30 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
         }
       },
     );
+    this.deepseekBridgeMgr.startPolling(
+      this.endpointMgr,
+      () => this.pushSettingsState(),
+      async (state) => {
+        const deepseekIsActive =
+          this.endpointMgr.getActiveEndpointCapabilities().kind ===
+          "deepseek-bridge";
+        if (
+          state.loggedIn &&
+          state.bridgeRunning &&
+          deepseekIsActive &&
+          (!state.endpointHealthy ||
+            this.endpointMgr.getEndpointModels(DEEPSEEK_BRIDGE_URL).length === 0)
+        ) {
+          await this.refreshModels(DEEPSEEK_BRIDGE_URL);
+        }
+      },
+    );
     void this.autoConnectConfiguredCodexAppServer();
     void this.autoConnectConfiguredCodexBridge();
     void this.autoConnectConfiguredClaudeBridge();
     void this.autoConnectConfiguredCursorBridge();
     void this.autoConnectConfiguredOpenCodeBridge();
+    void this.autoConnectConfiguredDeepSeekBridge();
     this.startBridgeUsagePolling();
   }
 
@@ -454,6 +477,7 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
     this.claudeBridgeMgr.dispose();
     this.cursorBridgeMgr.dispose();
     this.opencodeBridgeMgr.dispose();
+    this.deepseekBridgeMgr.dispose();
   }
 
   /* ── Helpers ── */
@@ -647,7 +671,8 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
       | "codex-bridge"
       | "claude-bridge"
       | "cursor-bridge"
-      | "opencode-bridge",
+      | "opencode-bridge"
+      | "deepseek-bridge",
   ): boolean {
     return this.endpointMgr
       .getEndpoints()
@@ -772,6 +797,29 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
     this.updateStatusBar();
   }
 
+  private async autoConnectConfiguredDeepSeekBridge() {
+    if (!this.hasBridgeEndpoint("deepseek-bridge")) return;
+
+    await this.deepseekBridgeMgr.autoConnectIfConfigured({
+      config: this.config,
+      endpointMgr: this.endpointMgr,
+      defaultSystemPrompt: DEFAULT_SYSTEM_PROMPT,
+      workspaceRoot: this.getWorkspaceRoot(),
+    });
+
+    this.startEndpointHealthChecks();
+    if (
+      this.endpointMgr.getActiveEndpointCapabilities().kind ===
+      "deepseek-bridge"
+    ) {
+      await this.refreshModels(this.endpointMgr.getResolvedActiveEndpointUrl());
+      return;
+    }
+    this.pushSettingsState();
+    this.postState();
+    this.updateStatusBar();
+  }
+
   private async handleEndpointSelection(sessionId: string, endpointUrl: string) {
     const session = this.sessionMgr.requireSession(sessionId);
     if (!session) return;
@@ -803,6 +851,10 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
       await this.autoConnectConfiguredOpenCodeBridge();
       return;
     }
+    if (providerKind === "deepseek-bridge") {
+      await this.autoConnectConfiguredDeepSeekBridge();
+      return;
+    }
     await this.refreshModels(resolvedEndpointUrl);
   }
 
@@ -830,7 +882,8 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
         kind === "codex-bridge" ||
         kind === "claude-bridge" ||
         kind === "cursor-bridge" ||
-        kind === "opencode-bridge"
+        kind === "opencode-bridge" ||
+        kind === "deepseek-bridge"
       ) {
         urls.add(resolved);
       }
@@ -858,7 +911,8 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
       kind !== "codex-bridge" &&
       kind !== "claude-bridge" &&
       kind !== "cursor-bridge" &&
-      kind !== "opencode-bridge"
+      kind !== "opencode-bridge" &&
+      kind !== "deepseek-bridge"
     ) {
       return false;
     }
@@ -1222,6 +1276,8 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
                 ? OPENCODE_GO_BASE_URL
                 : providerPreset === "xai"
                   ? XAI_BASE_URL
+                  : providerPreset === "deepseek"
+                    ? DEEPSEEK_BRIDGE_URL
                 : String(message.url || "").trim();
             const url = normalizeEndpointInputUrl(rawUrl);
             const apiKey = String(message.apiKey || "").trim();
@@ -1231,6 +1287,8 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
                 ? getOpenCodeGoProviderName(rawName)
                 : providerPreset === "xai"
                   ? getXAIProviderName(rawName)
+                  : providerPreset === "deepseek"
+                    ? (rawName || "DeepSeek API Bridge")
                 : (rawName || url);
             const endpoints = this.endpointMgr.getConfiguredEndpoints();
             endpoints.push({ name, url });
@@ -1256,6 +1314,8 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
               void this.autoConnectConfiguredCursorBridge();
             } else if (providerKind === "opencode-bridge") {
               void this.autoConnectConfiguredOpenCodeBridge();
+            } else if (providerKind === "deepseek-bridge") {
+              void this.autoConnectConfiguredDeepSeekBridge();
             }
             break;
           }
@@ -1295,8 +1355,13 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
           case "setActiveEndpoint": {
             const endpointUrl = normalizeEndpointInputUrl(String(message.url || ""));
             this.endpointMgr.switchEndpoint(endpointUrl);
-            if (this.getEndpointCapabilities(endpointUrl).kind === "codex-app-server") {
+            const providerKind = this.getEndpointCapabilities(endpointUrl).kind;
+            if (providerKind === "codex-app-server") {
               await this.autoConnectConfiguredCodexAppServer();
+              break;
+            }
+            if (providerKind === "deepseek-bridge") {
+              await this.autoConnectConfiguredDeepSeekBridge();
               break;
             }
             await this.refreshModels(endpointUrl);
@@ -1473,6 +1538,39 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
             }
             break;
           }
+          case "connectDeepSeek": {
+            try {
+              const state = await this.deepseekBridgeMgr.connect({
+                config: this.config,
+                endpointMgr: this.endpointMgr,
+                defaultSystemPrompt: DEFAULT_SYSTEM_PROMPT,
+                workspaceRoot: this.getWorkspaceRoot(),
+              });
+              this.startEndpointHealthChecks();
+              this.pushSettingsState();
+              this.postState();
+              this.updateStatusBar();
+
+              if (state.loggedIn) {
+                void vscode.window.showInformationMessage(
+                  "DeepSeek connected. PocketAI is now using the DeepSeek API Bridge endpoint.",
+                );
+                await this.refreshModels();
+              } else {
+                void vscode.window.showInformationMessage(
+                  "DeepSeek bridge is ready. Save a DeepSeek API key to finish connecting.",
+                );
+              }
+            } catch (error) {
+              void vscode.window.showErrorMessage(
+                error instanceof Error
+                  ? error.message
+                  : "Failed to connect to DeepSeek.",
+              );
+              this.pushSettingsState();
+            }
+            break;
+          }
           case "signInCodex": {
             try {
               await this.codexBridgeMgr.signIn(
@@ -1575,6 +1673,11 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
             this.pushSettingsState();
             break;
           }
+          case "refreshDeepSeekStatus": {
+            await this.deepseekBridgeMgr.refresh(this.endpointMgr);
+            this.pushSettingsState();
+            break;
+          }
           case "refreshBridgeUsage": {
             const provider = String(message.provider || "").trim();
             const endpointUrl =
@@ -1583,9 +1686,11 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
                 : provider === "claude"
                   ? CLAUDE_BRIDGE_URL
                   : provider === "cursor"
-                    ? CURSOR_BRIDGE_URL
-                    : provider === "opencode"
-                      ? OPENCODE_BRIDGE_URL
+                  ? CURSOR_BRIDGE_URL
+                  : provider === "opencode"
+                    ? OPENCODE_BRIDGE_URL
+                    : provider === "deepseek"
+                      ? DEEPSEEK_BRIDGE_URL
                       : this.endpointMgr.getResolvedActiveEndpointUrl();
             await this.refreshBridgeUsageForEndpoint(endpointUrl, {
               post: true,
@@ -1640,6 +1745,13 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
             const key = String(message.key || "");
             const value = message.value;
             if (epUrl && key === "apiKey") {
+              if (epUrl === normalizeEndpointInputUrl(DEEPSEEK_BRIDGE_URL)) {
+                await this.deepseekBridgeMgr.ensureEndpoint(
+                  this.config,
+                  DEFAULT_SYSTEM_PROMPT,
+                );
+                this.endpointMgr.initEndpoints();
+              }
               await this.endpointMgr.setEndpointApiKey(
                 epUrl,
                 String(value || ""),
@@ -1668,6 +1780,7 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
     const claudeState = this.claudeBridgeMgr.getState(this.endpointMgr);
     const cursorState = this.cursorBridgeMgr.getState(this.endpointMgr);
     const opencodeState = this.opencodeBridgeMgr.getState(this.endpointMgr);
+    const deepseekState = this.deepseekBridgeMgr.getState(this.endpointMgr);
     const codexReasoningControls = buildCodexReasoningControlsState({
       selectedModel: codexState.selectedModel,
       selectedReasoningEffort: codexState.selectedReasoningEffort,
@@ -1737,6 +1850,10 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
       opencode: opencodeState,
       opencodeUsage: this.bridgeUsageByEndpoint.get(
         normalizeEndpointInputUrl(OPENCODE_BRIDGE_URL),
+      ),
+      deepseek: deepseekState,
+      deepseekUsage: this.bridgeUsageByEndpoint.get(
+        normalizeEndpointInputUrl(DEEPSEEK_BRIDGE_URL),
       ),
     });
   }

@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { pathToFileURL } = require("node:url");
 
 const {
   detectSkillPromptIntent,
@@ -1902,6 +1903,10 @@ test("provider capabilities and chat controls honor provider kind and codex reas
     "opencode-bridge",
   );
   assert.equal(
+    getEndpointProviderKind("http://127.0.0.1:39464"),
+    "deepseek-bridge",
+  );
+  assert.equal(
     getEndpointProviderKind("https://example.com/v1"),
     "openai-compatible",
   );
@@ -1954,6 +1959,18 @@ test("provider capabilities and chat controls honor provider kind and codex reas
       description: "OpenCode bridge endpoint with provider/model controls",
       supportsStructuredTools: true,
       supportsReasoningEffort: false,
+      requiresBridgeBootstrap: true,
+      usesReportedUsageForContext: false,
+    },
+  );
+  assert.deepEqual(
+    getEndpointCapabilities("http://127.0.0.1:39464"),
+    {
+      kind: "deepseek-bridge",
+      label: "DeepSeek Bridge",
+      description: "DeepSeek V4 API bridge with provider/model controls",
+      supportsStructuredTools: true,
+      supportsReasoningEffort: true,
       requiresBridgeBootstrap: true,
       usesReportedUsageForContext: false,
     },
@@ -2070,6 +2087,28 @@ test("provider capabilities and chat controls honor provider kind and codex reas
       selectedReasoningEffort: "high",
       showReasoningControl: true,
       reasoningOptions: ["low", "high"],
+    },
+  );
+
+  const deepseekSession = createSession({
+    selectedModel: "deepseek-v4-pro",
+    selectedReasoningEffort: "max",
+  });
+  assert.deepEqual(
+    buildProviderChatControlsState({
+      endpointUrl: "http://127.0.0.1:39464",
+      availableModels: ["deepseek-v4-pro", "deepseek-v4-flash"],
+      session: deepseekSession,
+    }),
+    {
+      models: ["deepseek-v4-pro", "deepseek-v4-flash"],
+      selectedModel: "deepseek-v4-pro",
+      providerKind: "deepseek-bridge",
+      providerLabel: "DeepSeek Bridge",
+      providerDescription: "DeepSeek V4 API bridge with provider/model controls",
+      selectedReasoningEffort: "max",
+      showReasoningControl: true,
+      reasoningOptions: ["high", "max"],
     },
   );
 });
@@ -3170,6 +3209,25 @@ test("slash command workflow helpers handle common command flows and effects", (
   assert.match(opencodeUsageReport, /does not expose plan-limit percentages/);
   assert.match(opencodeUsageReport, /Total: 39 tokens/);
 
+  const deepseekUsageReport = buildUsageSlashReport({
+    endpointName: "DeepSeek Bridge",
+    endpointUrl: "http://127.0.0.1:39464",
+    providerLabel: "DeepSeek Bridge",
+    providerKind: "deepseek-bridge",
+    session,
+    usage: {
+      ok: true,
+      provider: "deepseek",
+      accountUsageAvailable: false,
+      message: "DeepSeek API account limit percentages are not exposed by this bridge.",
+      tokenUsage: {
+        total: { promptTokens: 40, completionTokens: 11, totalTokens: 51 },
+      },
+    },
+  });
+  assert.match(deepseekUsageReport, /DeepSeek API account limit percentages/);
+  assert.match(deepseekUsageReport, /Total: 51 tokens/);
+
   const localUsageReport = buildUsageSlashReport({
     endpointName: "Local PocketAI",
     endpointUrl: "http://127.0.0.1:39457",
@@ -3555,4 +3613,58 @@ test("chat webview script emits valid JavaScript", () => {
   assert.match(script, /action === "compact"[\s\S]+prompt: "\/compact"/);
   assert.match(script, /action === "refresh-models"[\s\S]+type: "refreshModels"/);
   assert.match(script, /action === "show-jobs"[\s\S]+prompt: "\/jobs"/);
+});
+
+test("codex bridge maps attached images to Codex app-server image input items", async () => {
+  const bridgeModuleUrl = pathToFileURL(
+    path.join(__dirname, "../scripts/codex-openai-bridge.mjs"),
+  ).href;
+  const {
+    buildCodexPrompt,
+    contentToTextAndImages,
+    createBridgeInfoPayload,
+  } = await import(bridgeModuleUrl);
+  const dataUrl = "data:image/png;base64,abc123";
+  const jpegUrl = "data:image/jpeg;base64,def456";
+
+  assert.deepEqual(
+    contentToTextAndImages([
+      { type: "input_text", text: "look at this" },
+      { type: "image_url", image_url: { url: dataUrl } },
+      { type: "input_image", image_url: jpegUrl },
+      { type: "image", url: "data:image/webp;base64,ghi789" },
+    ]),
+    {
+      text: "look at this\n[Image attached]\n[Image attached]\n[Image attached]",
+      imageUrls: [dataUrl, jpegUrl, "data:image/webp;base64,ghi789"],
+      sawImage: true,
+    },
+  );
+
+  const prompt = buildCodexPrompt(
+    [
+      { role: "system", content: "system note" },
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "what is in this image?" },
+          { type: "image_url", image_url: { url: dataUrl } },
+        ],
+      },
+    ],
+    [],
+  );
+
+  assert.equal(prompt.baseInstructions, "system note");
+  assert.match(prompt.input[0].text, /USER:\nwhat is in this image\?\n\[Image attached\]/);
+  assert.deepEqual(prompt.input[1], {
+    type: "image",
+    url: dataUrl,
+    detail: "high",
+  });
+
+  assert.deepEqual(createBridgeInfoPayload().capabilities, {
+    streamingChatCompletions: true,
+    imageInput: true,
+  });
 });

@@ -521,6 +521,42 @@ export function getSettingsHtml(nonce: string): string {
     </div>
   </div>
 
+  <h3>DeepSeek</h3>
+  <div class="codex-card collapsed" id="deepseekCard">
+    <div class="codex-header" id="deepseekHeader">
+      <div>
+        <div class="codex-title">Connect to DeepSeek API</div>
+        <div class="codex-subtitle">Use DeepSeek V4 Pro or Flash through a local OpenAI-compatible bridge. We'll save the API key securely and switch to it for you.</div>
+      </div>
+      <div class="codex-header-right">
+        <span class="codex-badge ready" id="deepseekBadge">Checking...</span>
+        <span class="codex-caret" id="deepseekCaret">&#9662;</span>
+      </div>
+    </div>
+    <div class="codex-body" id="deepseekBody">
+      <div class="codex-status" id="deepseekStatus">Checking DeepSeek status...</div>
+      <div class="setting-row">
+        <span class="setting-label">API Key</span>
+        <input type="password" id="deepseekApiKeyInput" value="" placeholder="DeepSeek API Key" />
+      </div>
+      <div class="codex-meta">
+        <div class="codex-meta-row"><span>Credentials</span><strong id="deepseekAccountStatus">Checking...</strong></div>
+        <div class="codex-meta-row"><span>Bridge</span><strong id="deepseekBridgeStatus">Not started</strong></div>
+        <div class="codex-meta-row"><span>Endpoint</span><strong id="deepseekEndpointStatus">Not added yet</strong></div>
+        <div class="codex-meta-row"><span>Models</span><strong id="deepseekModelsStatus">Checking...</strong></div>
+        <div class="codex-meta-row"><span>Usage</span><strong class="usage-value unknown" id="deepseekUsageStatus">Not checked</strong></div>
+      </div>
+      <div class="codex-actions">
+        <button class="codex-primary-btn" id="connectDeepSeekBtn">Connect to DeepSeek</button>
+        <button class="codex-secondary-btn" id="saveDeepSeekKeyBtn">Save Key</button>
+        <button class="codex-secondary-btn" id="clearDeepSeekKeyBtn">Clear Key</button>
+        <button class="codex-secondary-btn" id="refreshDeepSeekBtn">Refresh</button>
+        <button class="codex-secondary-btn" id="deepseekUsageBtn">Usage</button>
+      </div>
+      <p class="hint">The bridge keeps PocketAI tools in charge while DeepSeek handles model responses.</p>
+    </div>
+  </div>
+
   <h3>Endpoints</h3>
   <div id="endpointsList"></div>
 
@@ -531,6 +567,7 @@ export function getSettingsHtml(nonce: string): string {
 
   <div class="add-form hidden" id="addForm">
     <select id="newProviderPreset">
+      <option value="deepseek">DeepSeek API</option>
       <option value="opencode-go">OpenCode Go</option>
       <option value="xai">Grok (xAI)</option>
       <option value="custom">Custom</option>
@@ -631,13 +668,38 @@ export function getSettingsHtml(nonce: string): string {
   const signInOpenCodeBtn = document.getElementById("signInOpenCodeBtn");
   const refreshOpenCodeBtn = document.getElementById("refreshOpenCodeBtn");
   const opencodeUsageBtn = document.getElementById("opencodeUsageBtn");
+  const deepseekCard = document.getElementById("deepseekCard");
+  const deepseekBadge = document.getElementById("deepseekBadge");
+  const deepseekHeader = document.getElementById("deepseekHeader");
+  const deepseekBody = document.getElementById("deepseekBody");
+  const deepseekCaret = document.getElementById("deepseekCaret");
+  const deepseekStatus = document.getElementById("deepseekStatus");
+  const deepseekApiKeyInput = document.getElementById("deepseekApiKeyInput");
+  const deepseekAccountStatus = document.getElementById("deepseekAccountStatus");
+  const deepseekBridgeStatus = document.getElementById("deepseekBridgeStatus");
+  const deepseekEndpointStatus = document.getElementById("deepseekEndpointStatus");
+  const deepseekModelsStatus = document.getElementById("deepseekModelsStatus");
+  const deepseekUsageStatus = document.getElementById("deepseekUsageStatus");
+  const connectDeepSeekBtn = document.getElementById("connectDeepSeekBtn");
+  const saveDeepSeekKeyBtn = document.getElementById("saveDeepSeekKeyBtn");
+  const clearDeepSeekKeyBtn = document.getElementById("clearDeepSeekKeyBtn");
+  const refreshDeepSeekBtn = document.getElementById("refreshDeepSeekBtn");
+  const deepseekUsageBtn = document.getElementById("deepseekUsageBtn");
   let currentState = null;
   const expandedEndpoints = new Set();
   let codexExpanded = false;
   let claudeExpanded = false;
   let cursorExpanded = false;
   let opencodeExpanded = false;
+  let deepseekExpanded = false;
   const PROVIDER_PRESETS = {
+    "deepseek": {
+      url: "http://127.0.0.1:39464",
+      hideUrl: true,
+      namePlaceholder: "Name (optional, e.g. DeepSeek)",
+      urlPlaceholder: "URL handled automatically",
+      apiKeyPlaceholder: "DeepSeek API Key",
+    },
     "opencode-go": {
       url: "https://opencode.ai/zen/go",
       hideUrl: true,
@@ -671,6 +733,7 @@ export function getSettingsHtml(nonce: string): string {
     if (preset.hideUrl) {
       newUrlInput.value = preset.url;
     } else if (
+      newUrlInput.value === PROVIDER_PRESETS["deepseek"].url ||
       newUrlInput.value === PROVIDER_PRESETS["opencode-go"].url ||
       newUrlInput.value === PROVIDER_PRESETS["xai"].url
     ) {
@@ -762,6 +825,39 @@ export function getSettingsHtml(nonce: string): string {
     opencodeBody.classList.toggle("open", opencodeExpanded);
     opencodeCaret.classList.toggle("open", opencodeExpanded);
   });
+  connectDeepSeekBtn.addEventListener("click", () => {
+    vscode.postMessage({ type: "connectDeepSeek" });
+  });
+  saveDeepSeekKeyBtn.addEventListener("click", () => {
+    vscode.postMessage({
+      type: "updateEndpointSetting",
+      url: "http://127.0.0.1:39464",
+      key: "apiKey",
+      value: deepseekApiKeyInput.value,
+    });
+    deepseekApiKeyInput.value = "";
+  });
+  clearDeepSeekKeyBtn.addEventListener("click", () => {
+    vscode.postMessage({
+      type: "updateEndpointSetting",
+      url: "http://127.0.0.1:39464",
+      key: "apiKey",
+      value: "",
+    });
+    deepseekApiKeyInput.value = "";
+  });
+  refreshDeepSeekBtn.addEventListener("click", () => {
+    vscode.postMessage({ type: "refreshDeepSeekStatus" });
+  });
+  deepseekUsageBtn.addEventListener("click", () => {
+    vscode.postMessage({ type: "refreshBridgeUsage", provider: "deepseek" });
+  });
+  deepseekHeader.addEventListener("click", () => {
+    deepseekExpanded = !deepseekExpanded;
+    deepseekCard.classList.toggle("collapsed", !deepseekExpanded);
+    deepseekBody.classList.toggle("open", deepseekExpanded);
+    deepseekCaret.classList.toggle("open", deepseekExpanded);
+  });
 
   addTriggerBtn.addEventListener("click", () => {
     addTriggerBtn.style.display = "none";
@@ -773,7 +869,7 @@ export function getSettingsHtml(nonce: string): string {
   addCancelBtn.addEventListener("click", () => {
     addForm.classList.add("hidden");
     addTriggerBtn.style.display = "flex";
-    newProviderPresetSelect.value = "opencode-go";
+    newProviderPresetSelect.value = "deepseek";
     newNameInput.value = "";
     newUrlInput.value = "";
     newApiKeyInput.value = "";
@@ -791,7 +887,7 @@ export function getSettingsHtml(nonce: string): string {
     const apiKey = newApiKeyInput.value.trim();
     if (!url) return;
     vscode.postMessage({ type: "addEndpoint", providerPreset, name, url, apiKey });
-    newProviderPresetSelect.value = "opencode-go";
+    newProviderPresetSelect.value = "deepseek";
     newNameInput.value = "";
     newUrlInput.value = "";
     newApiKeyInput.value = "";
@@ -1146,6 +1242,67 @@ export function getSettingsHtml(nonce: string): string {
     opencodeUsageBtn.disabled = !!opencode.busy || !opencode.bridgeRunning;
   }
 
+  function renderDeepSeek(state) {
+    const deepseek = state.deepseek || {};
+    const models = Array.isArray(deepseek.models) ? deepseek.models : [];
+    const isConnected = !!(deepseek.apiKeyConfigured && deepseek.endpointActive && deepseek.endpointHealthy && deepseek.bridgeRunning);
+    const isReady = !!(deepseek.apiKeyConfigured && deepseek.bridgeRunning);
+
+    let badgeLabel = "Connect";
+    let badgeClass = "ready";
+    if (deepseek.busy) {
+      badgeLabel = "Working";
+      badgeClass = "ready";
+    } else if (isConnected) {
+      badgeLabel = "Connected";
+      badgeClass = "connected";
+    } else if (!deepseek.apiKeyConfigured) {
+      badgeLabel = "API Key";
+      badgeClass = "warning";
+    } else if (isReady) {
+      badgeLabel = "Ready";
+      badgeClass = "ready";
+    }
+
+    deepseekBadge.textContent = badgeLabel;
+    deepseekBadge.className = "codex-badge " + badgeClass;
+
+    const statusText = deepseek.status || "One click will add the endpoint and start DeepSeek V4 for you.";
+    deepseekStatus.textContent = statusText;
+    deepseekStatus.className = "codex-status" + (deepseek.error ? " error" : "");
+
+    deepseekAccountStatus.textContent = deepseek.loginLabel || (deepseek.apiKeyConfigured ? "API key saved" : "API key required");
+    deepseekBridgeStatus.textContent = deepseek.bridgeRunning
+      ? "Running on 127.0.0.1:39464"
+      : "Not started";
+    deepseekEndpointStatus.textContent = deepseek.endpointActive
+      ? (deepseek.endpointHealthy ? "Active and healthy" : "Active")
+      : deepseek.endpointConfigured
+        ? "Saved"
+        : "Not added yet";
+    deepseekModelsStatus.textContent = models.length
+      ? models.map((model) => model.displayName || model.id || "").filter(Boolean).join(", ")
+      : deepseek.apiKeyConfigured
+        ? "Waiting for bridge"
+        : "Save API key";
+    renderUsageValue(deepseekUsageStatus, getUsageSummary(state.deepseekUsage, "DeepSeek"));
+
+    deepseekApiKeyInput.placeholder = deepseek.apiKeyConfigured
+      ? "API key saved. Enter a new key to replace it."
+      : "DeepSeek API Key";
+    connectDeepSeekBtn.textContent = deepseek.busy
+      ? "Connecting..."
+      : isConnected && models.length > 0
+        ? "Connected"
+        : "Connect to DeepSeek";
+    connectDeepSeekBtn.disabled = !!deepseek.busy || (isConnected && models.length > 0);
+    saveDeepSeekKeyBtn.disabled = !!deepseek.busy;
+    clearDeepSeekKeyBtn.style.display = deepseek.apiKeyConfigured ? "inline-flex" : "none";
+    clearDeepSeekKeyBtn.disabled = !!deepseek.busy;
+    refreshDeepSeekBtn.disabled = !!deepseek.busy;
+    deepseekUsageBtn.disabled = !!deepseek.busy || !deepseek.bridgeRunning;
+  }
+
   function renderEndpoints(state) {
     endpointsList.innerHTML = "";
     for (const ep of state.endpoints) {
@@ -1303,6 +1460,7 @@ export function getSettingsHtml(nonce: string): string {
       renderClaude(msg);
       renderCursor(msg);
       renderOpenCode(msg);
+      renderDeepSeek(msg);
       renderEndpoints(msg);
     }
   });

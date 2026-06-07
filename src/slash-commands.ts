@@ -549,7 +549,8 @@ export async function handleSlashCommand(
         capabilities.kind === "codex-bridge" ||
         capabilities.kind === "claude-bridge" ||
         capabilities.kind === "cursor-bridge" ||
-        capabilities.kind === "opencode-bridge";
+        capabilities.kind === "opencode-bridge" ||
+        capabilities.kind === "deepseek-bridge";
       const { usage, fetchError } = shouldFetch
         ? await fetchBridgeUsage(session, deps)
         : {};

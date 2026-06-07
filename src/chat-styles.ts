@@ -449,7 +449,7 @@ export function getChatStyles(): string {
     .msg-body h1 { font-size: 16px; }
     .msg-body h2 { font-size: 14px; }
     .msg-body h3 { font-size: 13px; }
-    .msg-body strong { font-weight: 600; }
+    .msg-body strong { font-weight: 500; }
     .msg-body em { font-style: italic; }
     .msg-body del { text-decoration: line-through; opacity: 0.7; }
     .msg-body ul, .msg-body ol { padding-left: 18px; margin: 0 0 6px; }
