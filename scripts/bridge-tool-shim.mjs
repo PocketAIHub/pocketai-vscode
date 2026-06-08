@@ -1,5 +1,5 @@
-const TOOL_CALL_START = "<POCKETAI_TOOL_CALLS>";
-const TOOL_CALL_END = "</POCKETAI_TOOL_CALLS>";
+export const TOOL_CALL_START = "<POCKETAI_TOOL_CALLS>";
+export const TOOL_CALL_END = "</POCKETAI_TOOL_CALLS>";
 
 export function buildStructuredToolBridgeInstructions(tools) {
   if (!Array.isArray(tools) || tools.length === 0) return "";
@@ -19,10 +19,10 @@ export function buildStructuredToolBridgeInstructions(tools) {
 
   return [
     "[PocketAI Structured Tool Bridge]",
-    "The editor provided OpenAI-compatible tools, but this bridge cannot invoke native function calls directly.",
-    "These PocketAI tools are the only supported way to inspect files, edit files, or run commands in this bridge.",
-    "Do not use or mention Codex-native shell, file, sandbox, /permissions, or approval controls.",
-    "If a tool is needed, do not write prose or text-based @tool syntax.",
+    "The editor provided OpenAI-compatible tools, but this bridge cannot invoke OpenAI function calls directly.",
+    "PocketAI tools are available for editor-provided capabilities; CLI-native tools may also be used when they are available through the selected runtime.",
+    "When CLI-native work requires approval, PocketAI or the selected runtime will apply its configured permission policy.",
+    "If a PocketAI tool is needed, do not write prose or text-based @tool syntax.",
     `Instead emit exactly one JSON envelope using ${TOOL_CALL_START} and ${TOOL_CALL_END}.`,
     "Envelope shape:",
     `${TOOL_CALL_START}{"tool_calls":[{"name":"tool_name","arguments":{"arg":"value"}}]}${TOOL_CALL_END}`,
