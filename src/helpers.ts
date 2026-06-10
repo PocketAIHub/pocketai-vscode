@@ -389,10 +389,27 @@ export function parseToolCalls(text: string): ToolCall[] {
     calls.push(tc);
   }
 
+  // edit_file anchored form — replace a last-read line range.
+  const anchoredEditRegex = /@edit_file:\s*(\S+)(.*?)\n<<<REPLACE\n([\s\S]*?)\nREPLACE>>>/g;
+  while ((match = anchoredEditRegex.exec(text)) !== null) {
+    const flags = match[2] || "";
+    const range = parseEditLineRange(flags);
+    calls.push({
+      id: generateToolCallId(),
+      type: "edit_file",
+      filePath: match[1].trim(),
+      replace: match[3],
+      startLine: range?.startLine,
+      endLine: range?.endLine,
+      status: "pending",
+    });
+  }
+
   // edit_file — supports optional --replace-all flag
   const editRegex = /@edit_file:\s*(\S+)(.*?)\n<<<SEARCH\n([\s\S]*?)\n===\n([\s\S]*?)\nREPLACE>>>/g;
   while ((match = editRegex.exec(text)) !== null) {
     const flags = match[2] || "";
+    const range = parseEditLineRange(flags);
     calls.push({
       id: generateToolCallId(),
       type: "edit_file",
@@ -400,6 +417,8 @@ export function parseToolCalls(text: string): ToolCall[] {
       search: match[3],
       replace: match[4],
       replaceAll: flags.includes("--replace-all"),
+      startLine: range?.startLine,
+      endLine: range?.endLine,
       status: "pending",
     });
   }
@@ -697,6 +716,23 @@ export function parseToolCalls(text: string): ToolCall[] {
   }
 
   return calls;
+}
+
+function parseEditLineRange(flags: string):
+  | { startLine: number; endLine: number }
+  | undefined {
+  const linesMatch = flags.match(/--lines\s+(\d+)(?:\s*-\s*(\d+))?/);
+  if (linesMatch) {
+    const startLine = parseInt(linesMatch[1], 10);
+    const endLine = linesMatch[2] ? parseInt(linesMatch[2], 10) : startLine;
+    return { startLine, endLine };
+  }
+  const lineMatch = flags.match(/--line\s+(\d+)/);
+  if (lineMatch) {
+    const line = parseInt(lineMatch[1], 10);
+    return { startLine: line, endLine: line };
+  }
+  return undefined;
 }
 
 function parseJsonObjectArg(value: string): Record<string, unknown> | undefined {

@@ -45,6 +45,7 @@ import { McpManager, type McpServerConfig } from "./mcp-client";
 import { InlineDiffManager } from "./inline-diff";
 import { TerminalManager } from "./terminal-manager";
 import { MemoryManager } from "./memory-manager";
+import { getSharedProjectStorage } from "./shared-storage";
 import { handleSlashCommand, type SlashCommandDeps } from "./slash-commands";
 import { setupChatMessageHandler, type MessageHandlerDeps } from "./message-handler";
 import { CodexAppServerManager } from "./codex-app-server-manager";
@@ -108,6 +109,10 @@ import { createHarnessToolRegistry } from "./harness/tools/registry";
 import {
   clearSessionSkills,
 } from "./harness/skills/active";
+import {
+  resolveAnchoredEditRange,
+  validateAnchoredEdit,
+} from "./edit-anchors";
 import { buildSkillPreflightContext } from "./harness/skills/preflight";
 import { listHarnessSkills } from "./harness/skills/registry";
 import { buildHarnessRuntimeHealth } from "./harness/runtime-health";
@@ -1059,7 +1064,10 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
   /* ── MCP Servers ── */
 
   private connectMcpServers() {
-    const configs = this.config.get<McpServerConfig[]>("mcpServers") ?? [];
+    const configs = mergeMcpServerConfigs(
+      this.config.get<McpServerConfig[]>("mcpServers") ?? [],
+      loadSharedProjectMcpServers(),
+    );
     if (configs.length === 0) return;
     void this.mcpManager.connectAll(configs).then(
       () => {
@@ -2091,7 +2099,7 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
     session: NonNullable<ReturnType<SessionManager["requireSession"]>>,
     tc: import("./types").ToolCall,
   ): boolean {
-    if (tc.type !== "edit_file" || !tc.search || !tc.filePath) {
+    if (tc.type !== "edit_file" || !tc.filePath) {
       return false;
     }
     const rootPath = getSessionWorkspaceRoot(session);
@@ -2102,6 +2110,11 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
         (doc) => doc.uri.fsPath === fullPath,
       );
       const content = openDoc?.getText() ?? fs.readFileSync(fullPath, "utf-8");
+      const anchoredRange = resolveAnchoredEditRange(tc);
+      if (anchoredRange) {
+        return !validateAnchoredEdit(tc.filePath, content, anchoredRange).ok;
+      }
+      if (!tc.search) return false;
       return !content.includes(tc.search);
     } catch {
       return true;
@@ -2699,4 +2712,73 @@ class PocketAIViewProvider implements vscode.WebviewViewProvider {
     );
     return getChatHtml(nonce, webview.cspSource, brandIconUri.toString());
   }
+}
+
+function loadSharedProjectMcpServers(): McpServerConfig[] {
+  const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  if (!workspaceRoot) return [];
+
+  const filePath = getSharedProjectStorage(workspaceRoot).mcpFile;
+  try {
+    if (!fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) return [];
+    return normalizeMcpServerConfigs(JSON.parse(fs.readFileSync(filePath, "utf-8")));
+  } catch {
+    return [];
+  }
+}
+
+function mergeMcpServerConfigs(
+  ...groups: readonly McpServerConfig[][]
+): McpServerConfig[] {
+  const byName = new Map<string, McpServerConfig>();
+  for (const group of groups) {
+    for (const config of group) {
+      const name = config.name?.trim();
+      const command = config.command?.trim();
+      if (!name || !command || config.enabled === false || byName.has(name)) {
+        continue;
+      }
+      byName.set(name, { ...config, name, command });
+    }
+  }
+  return Array.from(byName.values());
+}
+
+function normalizeMcpServerConfigs(value: unknown): McpServerConfig[] {
+  const raw = Array.isArray(value)
+    ? value
+    : Array.isArray((value as { mcpServers?: unknown })?.mcpServers)
+      ? (value as { mcpServers: unknown[] }).mcpServers
+      : (value as { mcpServers?: unknown })?.mcpServers &&
+          typeof (value as { mcpServers?: unknown }).mcpServers === "object"
+        ? Object.entries(
+            (value as { mcpServers: Record<string, unknown> }).mcpServers,
+          ).map(([name, config]) => ({ name, ...(config as object) }))
+        : value && typeof value === "object"
+          ? Object.entries(value as Record<string, unknown>)
+              .map(([name, config]) =>
+                config && typeof config === "object" && "command" in config
+                  ? { name, ...(config as object) }
+                  : undefined,
+              )
+              .filter(Boolean)
+          : [];
+
+  return raw
+    .filter((config): config is Record<string, unknown> => !!config)
+    .map((config) => ({
+      name: String(config.name || "").trim(),
+      command: String(config.command || "").trim(),
+      args: Array.isArray(config.args) ? config.args.map(String) : [],
+      env:
+        config.env && typeof config.env === "object"
+          ? Object.fromEntries(
+              Object.entries(config.env as Record<string, unknown>).map(
+                ([key, value]) => [key, String(value)],
+              ),
+            )
+          : {},
+      enabled: config.enabled !== false,
+    }))
+    .filter((config) => config.name && config.command && config.enabled !== false);
 }

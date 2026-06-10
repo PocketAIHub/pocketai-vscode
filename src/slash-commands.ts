@@ -29,6 +29,7 @@ import {
   createRunLog,
   createSourcePacket,
   ensureProcessVault,
+  formatProcessVaultPath,
   getProcessVaultPaths,
   resolveVaultOpenPath,
   type ProcessVaultResult,
@@ -409,7 +410,7 @@ export async function handleSlashCommand(
           "reference",
           "process_vault",
           "PocketAI research, eval, run, and learning vault",
-          "Project process artifacts live in `.pocketai/vault/`: QMD source/run/eval/learning files plus SQL schema/export files.",
+          "Project process artifacts live in shared PocketAI project storage: QMD source/run/eval/learning files plus SQL schema/export files.",
         );
       } else if (normalizedAction === "source" || normalizedAction === "research") {
         if (!rest) {
@@ -504,7 +505,7 @@ export async function handleSlashCommand(
           content: [
             "Project evals:",
             "",
-            `File: \`${path.relative(rootPath, paths.evalsFile).split(path.sep).join("/")}\``,
+            `File: \`${formatProcessVaultPath(rootPath, paths.evalsFile)}\``,
             "",
             "```qmd",
             content,
@@ -525,7 +526,7 @@ export async function handleSlashCommand(
           "project",
           "project_evals",
           "Project success evals",
-          `Project evals live in \`.pocketai/vault/evals.qmd\`. Latest eval: ${evalText}`,
+          `Project evals live in shared PocketAI project storage. Latest eval: ${evalText}`,
         );
       }
       await applyProcessVaultResult(result);

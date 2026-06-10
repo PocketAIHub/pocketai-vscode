@@ -4,6 +4,10 @@ import * as vscode from "vscode";
 import type { ChatSession, ToolCall } from "./types";
 import { isInsidePath } from "./helpers";
 import { getSessionWorkspaceRoot } from "./workspace-roots";
+import {
+  applyAnchoredEdit,
+  resolveAnchoredEditRange,
+} from "./edit-anchors";
 
 export class DiffViewer {
   private diffContentProvider?: vscode.Disposable;
@@ -123,6 +127,16 @@ export class DiffViewer {
   private buildModifiedContent(original: string, toolCall: ToolCall): string {
     if (toolCall.type === "write_file") {
       return toolCall.content || "";
+    }
+    const anchoredRange = resolveAnchoredEditRange(toolCall);
+    if (anchoredRange) {
+      const anchoredEdit = applyAnchoredEdit(
+        toolCall.filePath,
+        original,
+        anchoredRange,
+        toolCall.replace || "",
+      );
+      return anchoredEdit.ok ? anchoredEdit.content : original;
     }
     if (!toolCall.search) {
       return original;

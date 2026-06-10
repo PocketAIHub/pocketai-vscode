@@ -165,7 +165,7 @@ const BUILTIN_HARNESS_SKILLS: ReadonlyArray<BuiltinHarnessSkill> = [
     prompt:
       "The user wants research before project work. Identify the concrete research question and the decision it should inform. " +
       "If the question depends on the current workspace, inspect relevant files first. If it depends on current external facts, use web_search and web_fetch rather than answering from memory. " +
-      "Create or update a QMD source packet under `.pocketai/vault/sources/` with: research question, sources, claims with evidence, decisions, risks, and open unknowns. " +
+      "Create or update a QMD source packet in the shared PocketAI project vault with: research question, sources, claims with evidence, decisions, risks, and open unknowns. " +
       "Also save a concise durable summary with memory_write when the result will be useful across future sessions. " +
       "End with a decision-ready summary and suggested pass/fail evals. Do not implement code changes unless the user explicitly asks for implementation too.",
     autoRoutePriority: 86,
@@ -185,7 +185,7 @@ const BUILTIN_HARNESS_SKILLS: ReadonlyArray<BuiltinHarnessSkill> = [
       "Ask high-signal questions grouped by product/user, technical design, data/state, security/privacy, operations, constraints, and evals. " +
       "For each major unknown, include why it matters, the failure mode if ignored, the fastest de-risking move, and a possible eval. " +
       "When enough context is already available, answer what can be answered and mark the rest as unresolved. " +
-      "Save an Unknowns Register or summary under `.pocketai/vault/runs/` or `.pocketai/vault/learnings.qmd`, and save compact durable project memory when useful. " +
+      "Save an Unknowns Register or summary in the shared PocketAI project vault runs or learnings files, and save compact durable project memory when useful. " +
       "Do not implement code during the grilling pass.",
     autoRoutePriority: 92,
     autoRouteMatchers: [
@@ -204,7 +204,7 @@ const BUILTIN_HARNESS_SKILLS: ReadonlyArray<BuiltinHarnessSkill> = [
       "The user wants clear evals before an agent run. Read relevant project context first when needed. " +
       "Define evals that are observable, pass/fail, and tied to evidence such as tests, commands, screenshots, generated artifacts, logs, or user acceptance checks. " +
       "Group evals by correctness, UX/API behavior, regression coverage, performance/reliability, and operational safety when those categories apply. " +
-      "Write or append the evals to `.pocketai/vault/evals.qmd` and save a short memory pointing to that file. " +
+      "Write or append the evals to the shared PocketAI project vault evals file and save a short memory pointing to that file. " +
       "End with the exact verification sequence the agent should run before calling the work complete.",
     autoRoutePriority: 83,
     autoRouteMatchers: [
@@ -219,11 +219,11 @@ const BUILTIN_HARNESS_SKILLS: ReadonlyArray<BuiltinHarnessSkill> = [
     description:
       "Work through a task by reading research and evals, implementing, verifying, and saving learnings.",
     prompt:
-      "The user wants an eval-driven implementation run. First read relevant `.pocketai/vault/` source packets, evals, learnings, and project memory. " +
+      "The user wants an eval-driven implementation run. First read relevant shared PocketAI project vault source packets, evals, learnings, and project memory. " +
       "If success criteria are missing or vague, pause to define evals before making code changes. " +
       "Implement the smallest complete change, run the narrowest relevant verification after each meaningful attempt, and keep iterating until the stated evals pass or a real blocker is identified. " +
       "When stuck, use memory and existing source packets first, then run a focused research or grill-me pass to unblock. " +
-      "Record durable learnings in `.pocketai/vault/learnings.qmd` and memory_write. In the final answer, report which evals passed, what evidence proved them, and any remaining risk.",
+      "Record durable learnings in the shared PocketAI project vault and memory_write. In the final answer, report which evals passed, what evidence proved them, and any remaining risk.",
     autoRoutePriority: 72,
     autoRouteMatchers: [
       /^(?:can you |could you |please )?(?:iterate|keep iterating)\b/i,

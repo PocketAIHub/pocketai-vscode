@@ -1,7 +1,15 @@
 import * as fs from "fs";
 import * as path from "path";
+import {
+  copyDirectoryContentsIfMissing,
+  ensureSharedProjectStorage,
+  formatSharedProjectPath,
+  getSharedProjectStorage,
+  legacyPocketAiDir,
+} from "./shared-storage";
 
-export const PROCESS_VAULT_DIR = ".pocketai/vault";
+export const PROCESS_VAULT_DIR = "vault";
+export const LEGACY_PROCESS_VAULT_DIR = ".pocketai/vault";
 
 export type ProcessVaultPaths = {
   root: string;
@@ -24,7 +32,7 @@ export type ProcessVaultResult = {
 type VaultEventKind = "init" | "source" | "run" | "eval" | "learning";
 
 export function getProcessVaultPaths(rootPath: string): ProcessVaultPaths {
-  const root = path.join(rootPath, PROCESS_VAULT_DIR);
+  const root = getSharedProjectStorage(rootPath).vaultDir;
   return {
     root,
     sourcesDir: path.join(root, "sources"),
@@ -41,7 +49,9 @@ export function ensureProcessVault(
   rootPath: string,
   now: Date = new Date(),
 ): ProcessVaultResult {
+  ensureSharedProjectStorage(rootPath);
   const paths = getProcessVaultPaths(rootPath);
+  migrateLegacyProcessVault(rootPath, paths.root);
   const createdPaths: string[] = [];
 
   ensureDir(paths.root, createdPaths);
@@ -52,7 +62,6 @@ export function ensureProcessVault(
   ensureFile(paths.learningsFile, buildLearningsQmd(now), createdPaths);
   ensureFile(paths.schemaFile, buildSchemaSql(), createdPaths);
   ensureFile(paths.indexSqlFile, buildIndexSqlHeader(), createdPaths);
-  ensureGitignore(rootPath);
 
   if (createdPaths.length) {
     appendSqlEvent(paths, {
@@ -84,13 +93,14 @@ export function ensureProcessVault(
 
 export function buildProcessVaultStatus(rootPath: string): ProcessVaultResult {
   const paths = getProcessVaultPaths(rootPath);
+  migrateLegacyProcessVault(rootPath, paths.root);
   if (!fs.existsSync(paths.root)) {
     return {
       status: "Process vault is not initialized.",
       transcript: [
         "PocketAI process vault is not initialized.",
         "",
-        "Use `/vault init` to create `.pocketai/vault/` with QMD notes and SQL export files.",
+        "Use `/vault init` to create a shared PocketAI project vault with QMD notes and SQL export files.",
       ].join("\n"),
     };
   }
@@ -307,6 +317,10 @@ export function resolveVaultOpenPath(
   return undefined;
 }
 
+export function formatProcessVaultPath(rootPath: string, filePath: string): string {
+  return relativeVaultPath(rootPath, filePath);
+}
+
 export function slugifyVaultName(value: string): string {
   const slug = value
     .trim()
@@ -327,19 +341,6 @@ function ensureFile(filePath: string, content: string, createdPaths: string[]) {
   if (fs.existsSync(filePath)) return;
   fs.writeFileSync(filePath, content, "utf-8");
   createdPaths.push(filePath);
-}
-
-function ensureGitignore(rootPath: string) {
-  try {
-    const gitignorePath = path.join(rootPath, ".gitignore");
-    if (!fs.existsSync(gitignorePath)) return;
-    const content = fs.readFileSync(gitignorePath, "utf-8");
-    if (!content.includes(".pocketai/")) {
-      fs.appendFileSync(gitignorePath, "\n# PocketAI local state\n.pocketai/\n");
-    }
-  } catch {
-    // The vault still works if .gitignore is unavailable.
-  }
 }
 
 function listQmdFiles(dirPath: string): string[] {
@@ -364,8 +365,12 @@ function buildVaultPathList(rootPath: string, paths: ProcessVaultPaths): string 
 }
 
 function relativeVaultPath(rootPath: string, filePath: string): string {
-  const relative = path.relative(rootPath, filePath).split(path.sep).join("/");
-  return relative || ".";
+  return formatSharedProjectPath(rootPath, filePath);
+}
+
+function migrateLegacyProcessVault(rootPath: string, destinationRoot: string) {
+  const legacyRoot = path.join(legacyPocketAiDir(rootPath), "vault");
+  copyDirectoryContentsIfMissing(legacyRoot, destinationRoot);
 }
 
 function timestampSlug(now: Date): string {

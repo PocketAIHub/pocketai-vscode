@@ -84,7 +84,7 @@ const STRUCTURED_TOOL_INSTRUCTIONS = `You have tools available via function call
 - If the user asks to use a named skill, call list_skills to verify it and run_skill to activate it.
 - Use skill_view to inspect a skill's full instructions or listed support files when the exact skill content matters.
 - Use skill_scan before skill_install when installing a local workspace skill. skill_install writes files and must use a candidate path from local disk.
-- Use skill_manage list to inspect installed workspace skills, and skill_manage enable/disable to toggle installed workspace skills.
+- Use skill_manage list to inspect installed project skills, and skill_manage enable/disable to toggle installed project skills.
 - Use mcp_list_resources/mcp_read_resource and mcp_list_prompts/mcp_get_prompt for MCP resources and prompts exposed by connected stdio MCP servers.
 - Do not claim a skill is available unless it appears in list_skills.
 - To find files by name or extension, use glob. To search file contents, use grep.
@@ -104,7 +104,8 @@ const STRUCTURED_TOOL_INSTRUCTIONS = `You have tools available via function call
 
 # Tool Usage Rules
 - Always read a file with read_file before editing it. Never edit a file you haven't read.
-- For edit_file, the old_string must match the file content EXACTLY including whitespace. If it matches multiple locations, include more surrounding context to make it unique, or use replace_all.
+- For edit_file, prefer start_line/end_line with new_string after read_file; PocketAI verifies the target lines against the last read snapshot before writing.
+- If using old_string, it must match the file content EXACTLY including whitespace. If it matches multiple locations, include more surrounding context to make it unique, or use replace_all.
 - Prefer edit_file over write_file for existing files — it only sends the diff.
 - Use write_file only for new files or complete rewrites.
 - After calling a tool, wait for its result. Do not guess or fabricate results.
@@ -768,8 +769,10 @@ function createToolCallFromFunction(
       if (args.limit !== undefined) tc.limit = Number(args.limit);
       break;
     case "edit_file":
-      tc.search = args.old_string || args.search;
-      tc.replace = args.new_string || args.replace;
+      tc.search = args.old_string !== undefined ? String(args.old_string) : args.search;
+      tc.replace = args.new_string !== undefined ? String(args.new_string) : args.replace;
+      if (args.start_line !== undefined) tc.startLine = Number(args.start_line);
+      if (args.end_line !== undefined) tc.endLine = Number(args.end_line);
       if (args.replace_all) tc.replaceAll = true;
       break;
     case "write_file":

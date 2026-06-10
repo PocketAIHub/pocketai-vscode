@@ -706,11 +706,11 @@ function formatSkillManageResult(result: WorkspaceSkillManageResult): string {
 
   if (result.action === "list") {
     if (result.skills.length === 0) {
-      return "No installed workspace skills were found.";
+      return "No installed project skills were found.";
     }
 
     return [
-      `Installed workspace skills (${result.skills.length}):`,
+      `Installed project skills (${result.skills.length}):`,
       ...result.skills.map(formatManagedSkillLine),
     ].join("\n");
   }

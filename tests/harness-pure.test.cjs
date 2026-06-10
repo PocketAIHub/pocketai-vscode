@@ -44,6 +44,12 @@ const {
   NON_DESTRUCTIVE_TOOL_TYPES,
 } = require("../dist/constants.js");
 const {
+  applyAnchoredEdit,
+  clearReadSnapshots,
+  recordReadSnapshot,
+  validateAnchoredEdit,
+} = require("../dist/edit-anchors.js");
+const {
   classifyToolRisk,
   classifyShellCommandRisk,
   getToolApprovalDecision,
@@ -186,6 +192,10 @@ const {
   formatMcpPromptGet,
   formatMcpResourceRead,
 } = require("../dist/mcp-format.js");
+const {
+  getSharedProjectStorage,
+  formatSharedProjectPath,
+} = require("../dist/shared-storage.js");
 const {
   discoverWorkspaceSkillFiles,
   findWorkspaceSkillRoots,
@@ -878,6 +888,46 @@ test("parseToolCalls understands newer IDE and editor-action tools", () => {
   assert.equal(calls[8].taskPrompt, "inspect auth flow and report risks");
 });
 
+test("parseToolCalls understands anchored edit line ranges", () => {
+  const calls = parseToolCalls(`
+@edit_file: src/app.ts --lines 3-4
+<<<REPLACE
+const next = true;
+return next;
+REPLACE>>>
+`);
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].type, "edit_file");
+  assert.equal(calls[0].filePath, "src/app.ts");
+  assert.equal(calls[0].startLine, 3);
+  assert.equal(calls[0].endLine, 4);
+  assert.equal(calls[0].replace, "const next = true;\nreturn next;");
+  assert.equal(calls[0].search, undefined);
+});
+
+test("anchored edits validate against the last read snapshot", () => {
+  clearReadSnapshots();
+  const filePath = "src/app.ts";
+  const original = ["alpha", "beta", "gamma", "delta"].join("\n");
+  recordReadSnapshot(filePath, original);
+
+  const applied = applyAnchoredEdit(filePath, original, {
+    startLine: 2,
+    endLine: 3,
+  }, "BETA\nGAMMA");
+  assert.equal(applied.ok, true);
+  assert.equal(applied.content, ["alpha", "BETA", "GAMMA", "delta"].join("\n"));
+
+  const changed = ["alpha", "changed", "gamma", "delta"].join("\n");
+  const stale = validateAnchoredEdit(filePath, changed, {
+    startLine: 2,
+    endLine: 3,
+  });
+  assert.equal(stale.ok, false);
+  assert.match(stale.error, /stale/);
+});
+
 test("parseToolCalls understands skill management text commands", () => {
   const calls = parseToolCalls(`
 @skill_view: github-pr-workflow
@@ -1059,6 +1109,36 @@ test("workspace skill helpers discover ancestor skills, metadata, and support fi
   assert.equal(normalizeSkillRelativePath("C:/secret.txt"), undefined);
 });
 
+test("shared project storage uses a deterministic app-data project directory", () => {
+  const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pocketai-shared-"));
+  const oldPocketAiHome = process.env.POCKETAI_HOME;
+  process.env.POCKETAI_HOME = path.join(tempRoot, "PocketAIHome");
+  try {
+    const workspaceRoot = path.join(tempRoot, "workspace");
+    fs.mkdirSync(workspaceRoot, { recursive: true });
+
+    const first = getSharedProjectStorage(workspaceRoot);
+    const second = getSharedProjectStorage(workspaceRoot);
+
+    assert.equal(first.projectId, second.projectId);
+    assert.match(first.projectId, /^workspace-[a-f0-9]{12}$/);
+    assert.equal(
+      first.projectRoot,
+      path.join(tempRoot, "PocketAIHome", "projects", first.projectId),
+    );
+    assert.equal(
+      formatSharedProjectPath(workspaceRoot, path.join(first.vaultDir, "evals.qmd")),
+      "PocketAI project storage/vault/evals.qmd",
+    );
+  } finally {
+    if (oldPocketAiHome === undefined) {
+      delete process.env.POCKETAI_HOME;
+    } else {
+      process.env.POCKETAI_HOME = oldPocketAiHome;
+    }
+  }
+});
+
 test("workspace skill scanner reports candidates and installed conflicts", () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pocketai-scan-"));
   const skillsRoot = path.join(tempRoot, "skills");
@@ -1119,6 +1199,8 @@ test("workspace skill scanner reports candidates and installed conflicts", () =>
 test("workspace skill installer copies skill and support files without overwriting", () => {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pocketai-install-"));
   const workspaceRoot = path.join(tempRoot, "workspace");
+  const oldPocketAiHome = process.env.POCKETAI_HOME;
+  process.env.POCKETAI_HOME = path.join(tempRoot, "PocketAIHome");
   const sourceSkillDir = path.join(tempRoot, "source", "debug-helper");
   fs.mkdirSync(path.join(sourceSkillDir, "references"), { recursive: true });
   fs.mkdirSync(path.join(sourceSkillDir, "scripts"), { recursive: true });
@@ -1149,55 +1231,66 @@ test("workspace skill installer copies skill and support files without overwriti
     symlinkCreated = false;
   }
 
-  const result = installWorkspaceSkillFromPath({
-    sourcePath: sourceSkillDir,
-    workspaceRoot,
-  });
-
-  assert.equal(result.ok, true);
-  const installedDir = path.join(workspaceRoot, ".pocketai", "skills", "debug-helper");
-  assert.equal(result.installedPath, installedDir);
-  assert.equal(
-    fs.readFileSync(path.join(installedDir, "SKILL.md"), "utf-8"),
-    fs.readFileSync(path.join(sourceSkillDir, "SKILL.md"), "utf-8"),
-  );
-  assert.equal(
-    fs.readFileSync(path.join(installedDir, "references", "guide.md"), "utf-8"),
-    "Guide",
-  );
-  assert.equal(
-    fs.readFileSync(path.join(installedDir, "scripts", "inspect.js"), "utf-8"),
-    "inspect();",
-  );
-  if (symlinkCreated) {
-    assert.equal(
-      fs.existsSync(path.join(installedDir, "references", "guide-link.md")),
-      false,
-    );
-    assert.equal(result.skippedSymlinkCount, 1);
-  }
-
-  const conflict = installWorkspaceSkillFromPath({
-    sourcePath: sourceSkillDir,
-    workspaceRoot,
-  });
-  assert.equal(conflict.ok, false);
-  assert.match(conflict.error, /already installed/);
-
-  if (symlinkCreated) {
-    const symlinkPath = path.join(tempRoot, "source-link");
-    fs.symlinkSync(sourceSkillDir, symlinkPath);
-    const symlinkResult = installWorkspaceSkillFromPath({
-      sourcePath: symlinkPath,
+  try {
+    const result = installWorkspaceSkillFromPath({
+      sourcePath: sourceSkillDir,
       workspaceRoot,
-      desiredId: "debug-helper-copy",
     });
-    assert.equal(symlinkResult.ok, false);
-    assert.match(symlinkResult.error, /symlink/);
 
-    const symlinkScan = scanWorkspaceSkillCandidates(symlinkPath);
-    assert.equal(symlinkScan.ok, false);
-    assert.match(symlinkScan.error, /symlink/);
+    assert.equal(result.ok, true);
+    const installedDir = path.join(
+      getSharedProjectStorage(workspaceRoot).skillsDir,
+      "debug-helper",
+    );
+    assert.equal(result.installedPath, installedDir);
+    assert.equal(
+      fs.readFileSync(path.join(installedDir, "SKILL.md"), "utf-8"),
+      fs.readFileSync(path.join(sourceSkillDir, "SKILL.md"), "utf-8"),
+    );
+    assert.equal(
+      fs.readFileSync(path.join(installedDir, "references", "guide.md"), "utf-8"),
+      "Guide",
+    );
+    assert.equal(
+      fs.readFileSync(path.join(installedDir, "scripts", "inspect.js"), "utf-8"),
+      "inspect();",
+    );
+    if (symlinkCreated) {
+      assert.equal(
+        fs.existsSync(path.join(installedDir, "references", "guide-link.md")),
+        false,
+      );
+      assert.equal(result.skippedSymlinkCount, 1);
+    }
+
+    const conflict = installWorkspaceSkillFromPath({
+      sourcePath: sourceSkillDir,
+      workspaceRoot,
+    });
+    assert.equal(conflict.ok, false);
+    assert.match(conflict.error, /already installed/);
+
+    if (symlinkCreated) {
+      const symlinkPath = path.join(tempRoot, "source-link");
+      fs.symlinkSync(sourceSkillDir, symlinkPath);
+      const symlinkResult = installWorkspaceSkillFromPath({
+        sourcePath: symlinkPath,
+        workspaceRoot,
+        desiredId: "debug-helper-copy",
+      });
+      assert.equal(symlinkResult.ok, false);
+      assert.match(symlinkResult.error, /symlink/);
+
+      const symlinkScan = scanWorkspaceSkillCandidates(symlinkPath);
+      assert.equal(symlinkScan.ok, false);
+      assert.match(symlinkScan.error, /symlink/);
+    }
+  } finally {
+    if (oldPocketAiHome === undefined) {
+      delete process.env.POCKETAI_HOME;
+    } else {
+      process.env.POCKETAI_HOME = oldPocketAiHome;
+    }
   }
 });
 
@@ -1267,7 +1360,7 @@ test("workspace skill manager lists, disables, enables, and rejects unsafe targe
     skillId: "missing-skill",
   });
   assert.equal(unknown.ok, false);
-  assert.match(unknown.error, /Unknown installed workspace skill/);
+  assert.match(unknown.error, /Unknown installed project skill/);
 
   const builtin = manageWorkspaceSkill({
     workspaceRoots: [workspaceRoot],

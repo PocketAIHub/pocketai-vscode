@@ -21,6 +21,12 @@ import {
   runCommandWithStreaming,
   startBackgroundCommand,
 } from "./harness/commands/runtime";
+import {
+  applyAnchoredEdit,
+  clearReadSnapshots,
+  recordReadSnapshot,
+  resolveAnchoredEditRange,
+} from "./edit-anchors";
 
 /**
  * Tracks which files have been read in the current session.
@@ -31,6 +37,7 @@ const filesReadInSession = new Set<string>();
 /** Clear read tracking (call on new session). */
 export function clearReadTracking() {
   filesReadInSession.clear();
+  clearReadSnapshots();
 }
 
 export function hasReadFileInSession(filePath: string) {
@@ -104,6 +111,7 @@ export async function executeToolCall(
         const allLines = content.split("\n");
 
         filesReadInSession.add(toolCall.filePath);
+        const snapshot = recordReadSnapshot(toolCall.filePath, content);
 
         const MAX_LINES = 2000;
         const MAX_LINE_LENGTH = 2000;
@@ -124,7 +132,10 @@ export async function executeToolCall(
           })
           .join("\n");
 
-        let result = numbered;
+        let result =
+          `[Read snapshot ${snapshot.contentHash}: lines ${offset + 1}-${offset + sliced.length} shown. ` +
+          "For safer edits, call edit_file with start_line/end_line and new_string; PocketAI will verify these lines have not changed since this read.]\n" +
+          numbered;
         if (truncatedLineCount > 0) {
           result += `\n\n... (${truncatedLineCount} more lines not shown. Use offset/limit to read more.)`;
         }
@@ -407,10 +418,33 @@ export async function executeToolCall(
         }
 
         const content = fs.readFileSync(fullPath, "utf-8");
+        const anchoredRange = resolveAnchoredEditRange(toolCall);
+        if (anchoredRange) {
+          const anchoredEdit = applyAnchoredEdit(
+            toolCall.filePath,
+            content,
+            anchoredRange,
+            toolCall.replace || "",
+          );
+          if (!anchoredEdit.ok) return anchoredEdit.error;
+
+          createCheckpoint(session, [toolCall.filePath]);
+          fs.writeFileSync(fullPath, anchoredEdit.content, "utf-8");
+          recordReadSnapshot(toolCall.filePath, anchoredEdit.content);
+          void runHooks(config, outputChannel, "postEdit", {
+            file: toolCall.filePath,
+            tool: "edit_file",
+          });
+          return (
+            `Successfully edited \`${toolCall.filePath}\` lines ${anchoredRange.startLine}-${anchoredRange.endLine} ` +
+            `(anchored hash ${anchoredEdit.currentHash}).`
+          );
+        }
+
         const searchText = toolCall.search || "";
 
         if (!searchText) {
-          return "Error: old_string (search) is required and must not be empty.";
+          return "Error: Provide either start_line/end_line for an anchored edit or old_string for an exact replacement.";
         }
 
         if (!content.includes(searchText)) {
@@ -434,6 +468,7 @@ export async function executeToolCall(
           const newContent = content.split(searchText).join(toolCall.replace || "");
           const occurrences = content.split(searchText).length - 1;
           fs.writeFileSync(fullPath, newContent, "utf-8");
+          recordReadSnapshot(toolCall.filePath, newContent);
           void runHooks(config, outputChannel, "postEdit", {
             file: toolCall.filePath,
             tool: "edit_file",
@@ -454,6 +489,7 @@ export async function executeToolCall(
         createCheckpoint(session, [toolCall.filePath]);
         const newContent = content.replace(searchText, toolCall.replace || "");
         fs.writeFileSync(fullPath, newContent, "utf-8");
+        recordReadSnapshot(toolCall.filePath, newContent);
         void runHooks(config, outputChannel, "postEdit", {
           file: toolCall.filePath,
           tool: "edit_file",
@@ -481,6 +517,7 @@ export async function executeToolCall(
         fs.mkdirSync(dir, { recursive: true });
         fs.writeFileSync(fullPath, toolCall.content || "", "utf-8");
         filesReadInSession.add(toolCall.filePath);
+        recordReadSnapshot(toolCall.filePath, toolCall.content || "");
         void runHooks(config, outputChannel, exists ? "postEdit" : "postCreate", {
           file: toolCall.filePath,
           tool: "write_file",

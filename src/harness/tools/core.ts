@@ -20,6 +20,11 @@ import {
   runCommandWithStreaming,
   startBackgroundCommand,
 } from "../commands/runtime";
+import {
+  applyAnchoredEdit,
+  recordReadSnapshot,
+  resolveAnchoredEditRange,
+} from "../../edit-anchors";
 import type { MemoryType } from "../../memory-manager";
 import type { ChatSession, ToolCall } from "../../types";
 import { upsertBackgroundTask } from "../state";
@@ -47,6 +52,7 @@ export async function executeReadFileTool(
       const content = fs.readFileSync(fullPath, "utf-8");
       const allLines = content.split("\n");
       markFileReadInSession(toolCall.filePath);
+      const snapshot = recordReadSnapshot(toolCall.filePath, content);
 
       const maxLines = 2000;
       const maxLineLength = 2000;
@@ -66,9 +72,13 @@ export async function executeReadFileTool(
         })
         .join("\n");
 
-      return truncatedLineCount > 0
+      const header =
+        `[Read snapshot ${snapshot.contentHash}: lines ${offset + 1}-${offset + sliced.length} shown. ` +
+        "For safer edits, call edit_file with start_line/end_line and new_string; PocketAI will verify these lines have not changed since this read.]";
+      const body = truncatedLineCount > 0
         ? `${numbered}\n\n... (${truncatedLineCount} more lines not shown. Use offset/limit to read more.)`
         : numbered;
+      return `${header}\n${body}`;
     } catch (error) {
       return `Error reading file: ${(error as Error).message}`;
     }
@@ -87,9 +97,32 @@ export async function executeEditFileTool(
       }
 
       const content = fs.readFileSync(fullPath, "utf-8");
+      const anchoredRange = resolveAnchoredEditRange(toolCall);
+      if (anchoredRange) {
+        const anchoredEdit = applyAnchoredEdit(
+          toolCall.filePath,
+          content,
+          anchoredRange,
+          toolCall.replace || "",
+        );
+        if (!anchoredEdit.ok) return anchoredEdit.error;
+
+        createCheckpoint(session, [toolCall.filePath]);
+        fs.writeFileSync(fullPath, anchoredEdit.content, "utf-8");
+        recordReadSnapshot(toolCall.filePath, anchoredEdit.content);
+        void runHooks(deps.config, deps.outputChannel, "postEdit", {
+          file: toolCall.filePath,
+          tool: "edit_file",
+        });
+        return (
+          `Successfully edited \`${toolCall.filePath}\` lines ${anchoredRange.startLine}-${anchoredRange.endLine} ` +
+          `(anchored hash ${anchoredEdit.currentHash}).`
+        );
+      }
+
       const searchText = toolCall.search || "";
       if (!searchText) {
-        return "Error: old_string (search) is required and must not be empty.";
+        return "Error: Provide either start_line/end_line for an anchored edit or old_string for an exact replacement.";
       }
 
       if (!content.includes(searchText)) {
@@ -110,6 +143,7 @@ export async function executeEditFileTool(
         const newContent = content.split(searchText).join(toolCall.replace || "");
         const occurrences = content.split(searchText).length - 1;
         fs.writeFileSync(fullPath, newContent, "utf-8");
+        recordReadSnapshot(toolCall.filePath, newContent);
         void runHooks(deps.config, deps.outputChannel, "postEdit", {
           file: toolCall.filePath,
           tool: "edit_file",
@@ -128,6 +162,7 @@ export async function executeEditFileTool(
       createCheckpoint(session, [toolCall.filePath]);
       const newContent = content.replace(searchText, toolCall.replace || "");
       fs.writeFileSync(fullPath, newContent, "utf-8");
+      recordReadSnapshot(toolCall.filePath, newContent);
       void runHooks(deps.config, deps.outputChannel, "postEdit", {
         file: toolCall.filePath,
         tool: "edit_file",
@@ -155,6 +190,7 @@ export async function executeWriteFileTool(
       fs.mkdirSync(path.dirname(fullPath), { recursive: true });
       fs.writeFileSync(fullPath, toolCall.content || "", "utf-8");
       markFileReadInSession(toolCall.filePath);
+      recordReadSnapshot(toolCall.filePath, toolCall.content || "");
       void runHooks(
         deps.config,
         deps.outputChannel,

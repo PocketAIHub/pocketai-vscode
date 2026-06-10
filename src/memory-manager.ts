@@ -1,11 +1,17 @@
 import * as fs from "fs";
 import * as path from "path";
-import * as vscode from "vscode";
+import {
+  copyDirectoryContentsIfMissing,
+  ensureSharedProjectStorage,
+  getSharedProjectStorage,
+  legacyPocketAiDir,
+} from "./shared-storage";
 
 /**
  * Persistent, file-based memory system for PocketAI.
  *
- * Memories are stored in `.pocketai/memory/` inside the workspace root.
+ * Memories are stored in PocketAI shared project storage. Existing
+ * `.pocketai/memory/` stores are copied forward on first load.
  * Each memory is a JSON entry in `memories.json`. Memories persist across
  * sessions and conversations, allowing the model to recall context about
  * the user, project, and past decisions.
@@ -34,7 +40,6 @@ interface MemoryStore {
   memories: MemoryEntry[];
 }
 
-const MEMORY_DIR = ".pocketai/memory";
 const MEMORY_FILE = "memories.json";
 const MAX_MEMORIES = 100;
 
@@ -49,7 +54,12 @@ export class MemoryManager {
 
   /** Directory where memories are stored. */
   private get memoryDir(): string {
-    return path.join(this.rootPath, MEMORY_DIR);
+    return getSharedProjectStorage(this.rootPath).memoryDir;
+  }
+
+  /** Legacy workspace-local directory used before shared project storage. */
+  private get legacyMemoryDir(): string {
+    return path.join(legacyPocketAiDir(this.rootPath), "memory");
   }
 
   /** Full path to the memories JSON file. */
@@ -60,6 +70,7 @@ export class MemoryManager {
   /** Load memories from disk. */
   load(): void {
     try {
+      copyDirectoryContentsIfMissing(this.legacyMemoryDir, this.memoryDir);
       if (fs.existsSync(this.memoryFilePath)) {
         const raw = fs.readFileSync(this.memoryFilePath, "utf-8");
         const store: MemoryStore = JSON.parse(raw);
@@ -74,10 +85,8 @@ export class MemoryManager {
   /** Save memories to disk. */
   private save(): void {
     try {
+      ensureSharedProjectStorage(this.rootPath);
       fs.mkdirSync(this.memoryDir, { recursive: true });
-
-      // Add .pocketai to .gitignore if not already there
-      this.ensureGitignore();
 
       const store: MemoryStore = {
         version: 1,
@@ -91,21 +100,6 @@ export class MemoryManager {
     } catch (e) {
       // Silently fail — memory is a nice-to-have, not critical
       console.error("Failed to save memories:", e);
-    }
-  }
-
-  /** Ensure .pocketai/ is in .gitignore. */
-  private ensureGitignore(): void {
-    try {
-      const gitignorePath = path.join(this.rootPath, ".gitignore");
-      if (fs.existsSync(gitignorePath)) {
-        const content = fs.readFileSync(gitignorePath, "utf-8");
-        if (!content.includes(".pocketai/")) {
-          fs.appendFileSync(gitignorePath, "\n# PocketAI memory\n.pocketai/\n");
-        }
-      }
-    } catch {
-      // Not critical
     }
   }
 

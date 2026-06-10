@@ -47,6 +47,11 @@ const MODEL_DEFINITIONS = [
     description: "Latest Opus model for complex reasoning tasks.",
   },
   {
+    id: "claude-fable-5",
+    display_name: "Fable 5",
+    description: "Pinned Claude Fable 5 model.",
+  },
+  {
     id: "claude-opus-4-8",
     display_name: "Opus 4.8",
     description: "Pinned Claude Opus 4.8 model.",

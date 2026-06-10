@@ -72,6 +72,8 @@ export type ToolCall = {
   search?: string;
   replace?: string;
   replaceAll?: boolean;
+  startLine?: number;
+  endLine?: number;
   // write_file / create_file (legacy)
   content?: string;
   // run_command

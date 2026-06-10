@@ -33,7 +33,17 @@ export type HarnessSkillDescriptor = {
 };
 
 export function listHarnessSkills(): HarnessSkillDescriptor[] {
-  return [...listBuiltinSkills(), ...listWorkspaceSkills()];
+  const merged = new Map<string, HarnessSkillDescriptor>();
+
+  for (const skill of [
+    ...listBuiltinSkills(),
+    ...listBundledSkillMdSkills(),
+    ...listWorkspaceSkills(),
+  ]) {
+    merged.set(skill.id, skill);
+  }
+
+  return Array.from(merged.values());
 }
 
 export function getHarnessSkillById(skillId: string): HarnessSkillDescriptor | undefined {
@@ -53,27 +63,64 @@ function listBuiltinSkills(): HarnessSkillDescriptor[] {
   }));
 }
 
-function listWorkspaceSkills(): HarnessSkillDescriptor[] {
-  const workspaceRoots =
-    vscode.workspace.workspaceFolders?.map((folder) => folder.uri.fsPath) ?? [];
-  if (workspaceRoots.length === 0) return [];
-
-  const skillsRoots = findWorkspaceSkillRoots(workspaceRoots);
+function listBundledSkillMdSkills(): HarnessSkillDescriptor[] {
   const skillFiles = new Set<string>();
 
-  for (const skillsRoot of skillsRoots) {
+  for (const skillsRoot of bundledSkillMdRoots()) {
     for (const filePath of discoverWorkspaceSkillFiles(skillsRoot)) {
       skillFiles.add(filePath);
     }
   }
 
   return Array.from(skillFiles)
-    .map((filePath) => readWorkspaceSkill(filePath))
+    .map((filePath) => readSkillMdFile(filePath, "builtin", buildBundledSkillPrompt))
     .filter((skill): skill is HarnessSkillDescriptor => !!skill)
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
+function bundledSkillMdRoots(): string[] {
+  const extensionRoot = path.resolve(__dirname, "..", "..", "..");
+  const hermesRoot = path.join(extensionRoot, "bundled-skills", "hermes");
+  return fs.existsSync(hermesRoot) ? [hermesRoot] : [];
+}
+
+function listWorkspaceSkills(): HarnessSkillDescriptor[] {
+  const workspaceRoots =
+    vscode.workspace.workspaceFolders?.map((folder) => folder.uri.fsPath) ?? [];
+  if (workspaceRoots.length === 0) return [];
+
+  const skillsRoots = findWorkspaceSkillRoots(workspaceRoots);
+  const skillsById = new Map<string, HarnessSkillDescriptor>();
+
+  for (const skillsRoot of skillsRoots) {
+    for (const filePath of discoverWorkspaceSkillFiles(skillsRoot)) {
+      const skill = readWorkspaceSkill(filePath);
+      if (skill) skillsById.set(skill.id, skill);
+    }
+  }
+
+  return Array.from(skillsById.values()).sort((a, b) =>
+    a.name.localeCompare(b.name),
+  );
+}
+
 function readWorkspaceSkill(filePath: string): HarnessSkillDescriptor | undefined {
+  const skill = readSkillMdFile(filePath, "workspace", buildWorkspaceSkillPrompt);
+  if (skill?.skillDir && isWorkspaceSkillDisabled(skill.skillDir)) {
+    return undefined;
+  }
+  return skill;
+}
+
+function readSkillMdFile(
+  filePath: string,
+  source: HarnessSkillDescriptor["source"],
+  buildPrompt: (
+    prompt: string,
+    filePath: string,
+    supportFiles: WorkspaceSkillSupportFile[],
+  ) => string,
+): HarnessSkillDescriptor | undefined {
   try {
     const rawPrompt = fs.readFileSync(filePath, "utf-8").trim();
     if (!rawPrompt) return undefined;
@@ -92,18 +139,14 @@ function readWorkspaceSkill(filePath: string): HarnessSkillDescriptor | undefine
       parsed.frontmatter.description ||
       summarizeSkill(parsed.body || rawPrompt);
     const skillDir = path.dirname(filePath);
-    if (isWorkspaceSkillDisabled(skillDir)) {
-      return undefined;
-    }
-
     const supportFiles = readWorkspaceSkillSupportFiles(skillDir);
 
     return {
       id: normalizeSkillId(skillId),
       name,
       description,
-      source: "workspace",
-      prompt: buildWorkspaceSkillPrompt(rawPrompt, filePath, supportFiles),
+      source,
+      prompt: buildPrompt(rawPrompt, filePath, supportFiles),
       path: filePath,
       content: rawPrompt,
       skillDir,
@@ -125,8 +168,8 @@ export function formatHarnessSkillView(
   const supportFiles = skill.supportFiles ?? [];
 
   if (requestedPath?.trim()) {
-    if (skill.source !== "workspace" || !skill.skillDir) {
-      return `Skill "${skill.name}" is built in and does not have workspace support files.`;
+    if (!skill.skillDir) {
+      return `Skill "${skill.name}" does not have support files.`;
     }
 
     const normalizedPath = normalizeSkillRelativePath(requestedPath);
@@ -156,7 +199,7 @@ export function formatHarnessSkillView(
     );
   }
 
-  const mainContent = skill.source === "workspace" && skill.path && skill.skillDir
+  const mainContent = skill.path && skill.skillDir
     ? readSafeSkillFile(skill.skillDir, skill.path)
     : { content: skill.content ?? skill.prompt };
   if ("error" in mainContent) return mainContent.error;
@@ -200,6 +243,31 @@ function buildWorkspaceSkillPrompt(
   return [
     "PocketAI workspace skill adaptation:",
     `- This skill was loaded from ${filePath}.`,
+    `- If it references supporting files, look under ${skillDir}/references, ${skillDir}/templates, ${skillDir}/scripts, or ${skillDir}/assets.`,
+    supportSummary,
+    "- Use skill_view to read the full skill file or any listed support file before relying on support-file details.",
+    "- Translate Hermes tool names to PocketAI tools: terminal/execute_code -> run_command; process -> run_command with bg_status/bg_cancel; search_files -> grep/glob/list_files; patch -> edit_file; delegate_task -> task; todo -> todo_write; web_extract -> web_fetch.",
+    "",
+    prompt,
+  ].join("\n");
+}
+
+function buildBundledSkillPrompt(
+  prompt: string,
+  filePath: string,
+  supportFiles: WorkspaceSkillSupportFile[],
+): string {
+  const skillDir = path.dirname(filePath);
+  const supportSummary =
+    supportFiles.length === 0
+      ? "- No support files were packaged for this skill."
+      : `- Packaged support files (${supportFiles.length}) are available through skill_view: ${supportFiles
+          .slice(0, 20)
+          .map((file) => file.path)
+          .join(", ")}${supportFiles.length > 20 ? ", ..." : ""}`;
+  return [
+    "PocketAI bundled skill adaptation:",
+    `- This skill is packaged with the PocketAI VS Code extension from ${filePath}.`,
     `- If it references supporting files, look under ${skillDir}/references, ${skillDir}/templates, ${skillDir}/scripts, or ${skillDir}/assets.`,
     supportSummary,
     "- Use skill_view to read the full skill file or any listed support file before relying on support-file details.",

@@ -2,6 +2,10 @@ import * as vscode from "vscode";
 import * as path from "path";
 import type { ToolCall } from "./types";
 import { isInsidePath } from "./helpers";
+import {
+  resolveAnchoredEditRange,
+  validateAnchoredEdit,
+} from "./edit-anchors";
 
 /**
  * Manages inline diff decorations and CodeLens for pending edit_file tool calls.
@@ -80,7 +84,7 @@ export class InlineDiffManager {
    * Opens the file, highlights the affected region, and adds CodeLens.
    */
   async showInlineDiff(tc: ToolCall, rootOverride?: string): Promise<void> {
-    if (tc.type !== "edit_file" || !tc.search) return;
+    if (tc.type !== "edit_file") return;
 
     const workspaceFolders = vscode.workspace.workspaceFolders;
     if (!workspaceFolders?.length) return;
@@ -95,14 +99,28 @@ export class InlineDiffManager {
         vscode.Uri.file(fullPath),
       );
       const content = doc.getText();
-      const searchIdx = content.indexOf(tc.search);
-      if (searchIdx === -1) return;
+      const anchoredRange = resolveAnchoredEditRange(tc);
+      let searchText = tc.search || "";
+      let startLine = 0;
+      let endLine = 0;
 
-      // Calculate line range for the search text
-      const beforeSearch = content.substring(0, searchIdx);
-      const startLine = beforeSearch.split("\n").length - 1;
-      const searchLines = tc.search.split("\n");
-      const endLine = startLine + searchLines.length - 1;
+      if (anchoredRange) {
+        const validation = validateAnchoredEdit(tc.filePath, content, anchoredRange);
+        if (!validation.ok) return;
+        searchText = validation.oldText;
+        startLine = anchoredRange.startLine - 1;
+        endLine = anchoredRange.endLine - 1;
+      } else {
+        if (!searchText) return;
+        const searchIdx = content.indexOf(searchText);
+        if (searchIdx === -1) return;
+
+        // Calculate line range for the search text
+        const beforeSearch = content.substring(0, searchIdx);
+        startLine = beforeSearch.split("\n").length - 1;
+        const searchLines = searchText.split("\n");
+        endLine = startLine + searchLines.length - 1;
+      }
 
       const editor = await vscode.window.showTextDocument(doc, {
         preserveFocus: true,
@@ -139,7 +157,7 @@ export class InlineDiffManager {
         new vscode.Position(startLine, 0),
         new vscode.Position(
           endLine,
-          searchLines[searchLines.length - 1].length,
+          doc.lineAt(endLine).text.length,
         ),
       );
 
@@ -183,7 +201,7 @@ export class InlineDiffManager {
         removedDecoration,
         addedDecoration,
         originalRange: range,
-        search: tc.search,
+        search: searchText,
         replace: tc.replace || "",
       });
 

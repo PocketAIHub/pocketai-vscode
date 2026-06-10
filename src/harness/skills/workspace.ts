@@ -1,5 +1,9 @@
 import * as fs from "fs";
 import * as path from "path";
+import {
+  ensureSharedProjectStorage,
+  getSharedProjectStorage,
+} from "../../shared-storage";
 
 export type WorkspaceSkillSupportKind =
   | "references"
@@ -147,6 +151,15 @@ export function findWorkspaceSkillRoots(
   const seen = new Set<string>();
 
   for (const workspaceRoot of workspaceRoots) {
+    const sharedSkillsRoot = getSharedProjectStorage(workspaceRoot).skillsDir;
+    if (isDirectory(sharedSkillsRoot)) {
+      const resolved = path.resolve(sharedSkillsRoot);
+      if (!seen.has(resolved)) {
+        seen.add(resolved);
+        roots.push(sharedSkillsRoot);
+      }
+    }
+
     let current = path.resolve(workspaceRoot);
 
     while (true) {
@@ -322,14 +335,14 @@ export function manageWorkspaceSkill(options: {
   if (!skill && isBuiltinSkill) {
     return {
       ok: false,
-      error: `Cannot ${options.action} built-in skill "${skillId}". Only installed workspace skills can be managed.`,
+      error: `Cannot ${options.action} built-in skill "${skillId}". Only installed project skills can be managed.`,
     };
   }
 
   if (!skill) {
     return {
       ok: false,
-      error: `Unknown installed workspace skill "${skillId}". Use skill_manage list to inspect installed skills.`,
+      error: `Unknown installed project skill "${skillId}". Use skill_manage list to inspect installed skills.`,
     };
   }
 
@@ -408,10 +421,7 @@ export function isWorkspaceSkillDisabled(skillDir: string): boolean {
 }
 
 export function resolveWorkspaceSkillsRoot(workspaceRoot: string): string {
-  return (
-    findWorkspaceSkillRoots([workspaceRoot])[0] ??
-    path.join(path.resolve(workspaceRoot), ".pocketai", "skills")
-  );
+  return ensureSharedProjectStorage(workspaceRoot).skillsDir;
 }
 
 export function installWorkspaceSkillFromPath(options: {

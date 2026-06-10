@@ -42,7 +42,7 @@ export const TOOL_DEFINITIONS: OpenAITool[] = [
     function: {
       name: "list_skills",
       description:
-        "Lists reusable built-in and workspace-local skills you can activate for the current request. " +
+        "Lists reusable built-in and project-local skills you can activate for the current request. " +
         "Use this when you want to discover higher-level workflows like debugging, review, testing, or refactoring before acting. " +
         "Optionally pass a query to filter skills by name or description.",
       parameters: {
@@ -116,7 +116,7 @@ export const TOOL_DEFINITIONS: OpenAITool[] = [
       description:
         "Scans a local directory or skill file for installable PocketAI workspace skill candidates. " +
         "Use this to inspect a local repo or folder before installing skills. " +
-        "It reports candidate ids, descriptions, support-file counts, metadata, source paths, and conflicts with installed workspace skills.",
+        "It reports candidate ids, descriptions, support-file counts, metadata, source paths, and conflicts with installed project skills.",
       parameters: {
         type: "object",
         properties: {
@@ -134,7 +134,7 @@ export const TOOL_DEFINITIONS: OpenAITool[] = [
     function: {
       name: "skill_install",
       description:
-        "Installs a local skill candidate into the workspace .pocketai/skills directory. " +
+        "Installs a local skill candidate into shared PocketAI project storage. " +
         "Use skill_scan first, then pass the candidate SKILL.md path or skill directory. " +
         "This copies SKILL.md and support directories references, templates, scripts, and assets. It refuses to overwrite existing installed skills.",
       parameters: {
@@ -160,7 +160,7 @@ export const TOOL_DEFINITIONS: OpenAITool[] = [
     function: {
       name: "skill_manage",
       description:
-        "Manages installed workspace skills. Use action list to inspect enabled and disabled skills, disable to hide an installed workspace skill from list_skills/run_skill, or enable to restore it. " +
+        "Manages installed project skills. Use action list to inspect enabled and disabled skills, disable to hide an installed project skill from list_skills/run_skill, or enable to restore it. " +
         "This does not remove skills and cannot manage built-in skills.",
       parameters: {
         type: "object",
@@ -169,7 +169,7 @@ export const TOOL_DEFINITIONS: OpenAITool[] = [
             type: "string",
             enum: ["list", "enable", "disable"],
             description:
-              "Management action. list reports installed workspace skills; enable removes the disabled marker; disable writes a disabled marker.",
+              "Management action. list reports installed project skills; enable removes the disabled marker; disable writes a disabled marker.",
           },
           name: {
             type: "string",
@@ -560,7 +560,7 @@ export const TOOL_DEFINITIONS: OpenAITool[] = [
     function: {
       name: "read_file",
       description:
-        "Reads a file from the workspace. Returns contents with line numbers (cat -n format). " +
+        "Reads a file from the workspace. Returns contents with line numbers (cat -n format) and records a read snapshot for safer anchored edits. " +
         "By default reads up to 2000 lines. Use offset/limit for large files. " +
         "Lines longer than 2000 characters are truncated. " +
         "Always read a file before editing it. " +
@@ -597,10 +597,11 @@ export const TOOL_DEFINITIONS: OpenAITool[] = [
     function: {
       name: "edit_file",
       description:
-        "Performs exact string replacements in files. " +
-        "The old_string must match the file content EXACTLY including whitespace and indentation — copy it from the read_file output, preserving everything after the line number prefix. " +
+        "Edits files using either safer read-snapshot line anchors or exact string replacement. " +
+        "Prefer start_line/end_line with new_string after read_file; PocketAI verifies those lines still match the last read snapshot before writing. " +
+        "When using old_string, it must match the file content EXACTLY including whitespace and indentation — copy it from the read_file output, preserving everything after the line number prefix. " +
         "The edit will FAIL if old_string is not unique in the file — provide a larger string with more surrounding context to make it unique. " +
-        "Use replace_all to change every occurrence (e.g. renaming a variable). " +
+        "Use replace_all only with old_string to change every occurrence (e.g. renaming a variable). " +
         "You MUST read a file with read_file before editing it. " +
         "Prefer editing existing files over creating new ones. " +
         "Use this instead of run_command with sed or awk.",
@@ -613,19 +614,30 @@ export const TOOL_DEFINITIONS: OpenAITool[] = [
           },
           old_string: {
             type: "string",
-            description: "The exact text to find and replace",
+            description:
+              "The exact text to find and replace. Optional when start_line/end_line are provided.",
           },
           new_string: {
             type: "string",
             description: "The replacement text (must be different from old_string)",
           },
+          start_line: {
+            type: "number",
+            description:
+              "1-based first line to replace from the most recent read_file snapshot. Prefer this for safer anchored edits.",
+          },
+          end_line: {
+            type: "number",
+            description:
+              "1-based last line to replace from the most recent read_file snapshot. Defaults to start_line.",
+          },
           replace_all: {
             type: "boolean",
             description:
-              "Replace all occurrences of old_string (default false). Useful for renaming variables or strings across the file.",
+              "Replace all occurrences of old_string (default false). Ignored for line-anchored edits.",
           },
         },
-        required: ["path", "old_string", "new_string"],
+        required: ["path", "new_string"],
       },
     },
   },
