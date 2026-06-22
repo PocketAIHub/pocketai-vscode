@@ -39,6 +39,8 @@ const BRIDGE_CAPABILITIES = {
 };
 
 const APPROVAL_POLICY = "never";
+const GENERATED_IMAGE_LIMIT = 4;
+const GENERATED_IMAGE_MAX_BYTES = 16 * 1024 * 1024;
 
 const BRIDGE_DEVELOPER_INSTRUCTIONS = [
   "You are acting as an OpenAI-compatible chat completions backend for a third-party editor.",
@@ -106,6 +108,81 @@ function writeSse(res, payload) {
 
 function normalizeText(text) {
   return String(text || "").replace(/\r\n/g, "\n").trim();
+}
+
+function imageMimeTypeForPath(filePath) {
+  const ext = path.extname(filePath || "").toLowerCase();
+  if (ext === ".png") return "image/png";
+  if (ext === ".jpg" || ext === ".jpeg") return "image/jpeg";
+  if (ext === ".webp") return "image/webp";
+  return "";
+}
+
+function collectGeneratedImagePaths(value, out = []) {
+  const imagePathKeys = new Set([
+    "saved_path",
+    "path",
+    "file_path",
+    "filepath",
+    "local_path",
+    "output_path",
+  ]);
+
+  if (!value || typeof value !== "object") return out;
+  if (Array.isArray(value)) {
+    for (const item of value) collectGeneratedImagePaths(item, out);
+    return out;
+  }
+
+  for (const [key, child] of Object.entries(value)) {
+    const normalizedKey = key.trim().toLowerCase();
+    if (
+      imagePathKeys.has(normalizedKey) &&
+      typeof child === "string" &&
+      child.trim()
+    ) {
+      out.push(child.trim());
+      continue;
+    }
+    collectGeneratedImagePaths(child, out);
+  }
+  return out;
+}
+
+function valueContainsImageGenerationEnd(value) {
+  if (!value || typeof value !== "object") return false;
+  if (Array.isArray(value)) return value.some(valueContainsImageGenerationEnd);
+  if (value.type === "image_generation_end") return true;
+  return Object.values(value).some(valueContainsImageGenerationEnd);
+}
+
+function readGeneratedImages(paths) {
+  const uniquePaths = [...new Set(paths)]
+    .map((filePath) => path.resolve(filePath))
+    .sort();
+  const images = [];
+
+  for (const filePath of uniquePaths) {
+    if (images.length >= GENERATED_IMAGE_LIMIT) break;
+    const mimeType = imageMimeTypeForPath(filePath);
+    if (!mimeType) continue;
+    try {
+      const stats = fs.statSync(filePath);
+      if (!stats.isFile() || stats.size <= 0 || stats.size > GENERATED_IMAGE_MAX_BYTES) {
+        continue;
+      }
+      images.push({
+        base64: fs.readFileSync(filePath).toString("base64"),
+        mimeType,
+        width: 0,
+        height: 0,
+      });
+    } catch {
+      // Generated image collection is best-effort; text responses should still work.
+    }
+  }
+
+  return images;
 }
 
 function getImageUrlFromPart(part) {
@@ -913,6 +990,7 @@ async function handleChatCompletions(req, res) {
     let responseModel = model || "";
     const pendingSsePayloads = [];
     const bridgeStructuredMode = tools.length > 0;
+    const generatedImagePaths = new Set();
 
     const emitChunk = (content) => {
       if (bridgeStructuredMode) {
@@ -943,6 +1021,11 @@ async function handleChatCompletions(req, res) {
     const completionPromise = new Promise((resolve, reject) => {
       const detach = client.onNotification((message) => {
         const params = message.params || {};
+        if (valueContainsImageGenerationEnd(params)) {
+          for (const filePath of collectGeneratedImagePaths(params)) {
+            generatedImagePaths.add(filePath);
+          }
+        }
 
         if (message.method === "error") {
           detach();
@@ -1009,9 +1092,11 @@ async function handleChatCompletions(req, res) {
           }
 
           resolved = true;
+          const images = readGeneratedImages(generatedImagePaths);
           resolve({
-            text: fullText,
+            text: fullText || (images.length ? "Generated image artifact." : ""),
             usage,
+            images,
           });
         }
       });
@@ -1102,6 +1187,7 @@ async function handleChatCompletions(req, res) {
             finish_reason: openAiToolCalls.length ? "tool_calls" : "stop",
           },
         ],
+        ...(result.images?.length ? { pocketai_images: result.images } : {}),
         ...(result.usage ? { usage: result.usage } : {}),
       });
       res.write("data: [DONE]\n\n");
@@ -1121,10 +1207,12 @@ async function handleChatCompletions(req, res) {
             role: "assistant",
             content: extracted.text,
             ...(openAiToolCalls.length ? { tool_calls: openAiToolCalls } : {}),
+            ...(result.images?.length ? { images: result.images } : {}),
           },
           finish_reason: openAiToolCalls.length ? "tool_calls" : "stop",
         },
       ],
+      ...(result.images?.length ? { pocketai_images: result.images } : {}),
       ...(result.usage ? { usage: result.usage } : {}),
     });
 
