@@ -278,12 +278,17 @@ export class EndpointManager {
 
   initEndpoints() {
     const endpoints = this.getEndpoints();
-      const storedActiveEndpointUrl = normalizeBaseUrl(
+    const currentUrls = new Set<string>();
+    const storedActiveEndpointUrl = normalizeBaseUrl(
       this.context.workspaceState.get<string>(ACTIVE_ENDPOINT_STORAGE_KEY) ?? "",
     );
     for (const ep of endpoints) {
       const url = normalizeEndpointInputUrl(ep.url);
-      if (!this.endpointHealthMap.has(url)) {
+      currentUrls.add(url);
+      const existingHealth = this.endpointHealthMap.get(url);
+      if (existingHealth) {
+        existingHealth.name = ep.name;
+      } else {
         this.endpointHealthMap.set(url, {
           name: ep.name,
           url,
@@ -291,6 +296,12 @@ export class EndpointManager {
           lastChecked: 0,
         });
       }
+    }
+    for (const url of this.endpointHealthMap.keys()) {
+      if (currentUrls.has(url)) continue;
+      this.endpointHealthMap.delete(url);
+      this.modelsByEndpoint.delete(url);
+      this.statusSummaryByEndpoint.delete(url);
     }
     if (
       !this.activeEndpointUrl ||
@@ -324,22 +335,6 @@ export class EndpointManager {
       const previousActiveHealthy =
         this.endpointHealthMap.get(this.getResolvedActiveEndpointUrl())?.healthy ?? false;
       const endpoints = this.getEndpoints();
-      const currentUrls = new Set<string>();
-      for (const ep of endpoints) {
-        const url = normalizeEndpointInputUrl(ep.url);
-        currentUrls.add(url);
-        if (!this.endpointHealthMap.has(url)) {
-          this.endpointHealthMap.set(url, {
-            name: ep.name,
-            url,
-            healthy: false,
-            lastChecked: 0,
-          });
-        }
-      }
-      for (const url of this.endpointHealthMap.keys()) {
-        if (!currentUrls.has(url)) this.endpointHealthMap.delete(url);
-      }
 
       let changed = false;
       for (const health of this.endpointHealthMap.values()) {

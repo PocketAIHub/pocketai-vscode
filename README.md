@@ -21,7 +21,7 @@
 
 ## Getting Started
 
-1. **Install** the extension from the VS Code marketplace (or build from source)
+1. **Install** the [PocketAI 1.0.20 VSIX](https://cdn.pocketaihub.com/downloads/pocketai-vscode-1.0.20.vsix) with VS Code's `Extensions: Install from VSIX...` command (or build from source)
 2. **Start** a local model server — e.g. `ollama serve`
 3. **Open** PocketAI with `Cmd+L` (or `Ctrl+L` on Windows/Linux)
 4. **Chat** — ask it to read, edit, refactor, debug, or explain your code
@@ -232,13 +232,17 @@ All settings live under `pocketai.*` in VS Code settings.
 ## Building from Source
 
 ```bash
-git clone https://github.com/trev222/pocketai-vscode.git
+git clone https://github.com/PocketAIHub/pocketai-vscode.git
 cd pocketai-vscode
-npm install
-npm run build
+npm ci
+npm run typecheck
+npm test
+npm run package:vsix
 ```
 
-Then press `F5` in VS Code to launch the extension in a development host.
+Then press `F5` in VS Code to launch the extension in a development host. Run
+`npm run test:extension` for the isolated Extension Host suite, or
+`npm run release:check` for the complete local release gate.
 
 ## License
 

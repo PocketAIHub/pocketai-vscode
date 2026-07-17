@@ -2,11 +2,17 @@
   "name": "pocketai-vscode",
   "publisher": "trevorwood",
   "private": true,
-  "version": "1.0.19",
+  "version": "1.0.20",
   "repository": {
     "type": "git",
-    "url": "https://github.com/trev222/pocketai-vscode"
+    "url": "https://github.com/PocketAIHub/pocketai-vscode"
   },
+  "homepage": "https://github.com/PocketAIHub/pocketai-vscode#readme",
+  "bugs": {
+    "url": "https://github.com/PocketAIHub/pocketai-vscode/issues"
+  },
+  "license": "MIT",
+  "icon": "media/logo-black2-zoom.png",
   "displayName": "PocketAI",
   "description": "Use the local PocketAI desktop app from VS Code.",
   "main": "./dist/extension.js",
@@ -112,16 +118,47 @@
       "properties": {
         "pocketai.endpoints": {
           "type": "array",
-          "default": [{ "name": "Local PocketAI", "url": "http://127.0.0.1:39457", "model": "", "maxTokens": 4096, "systemPrompt": "You are a concise coding assistant inside VS Code." }],
+          "default": [
+            {
+              "name": "Local PocketAI",
+              "url": "http://127.0.0.1:39457",
+              "model": "",
+              "maxTokens": 4096,
+              "systemPrompt": "You are a concise coding assistant inside VS Code."
+            }
+          ],
           "items": {
             "type": "object",
             "properties": {
-              "name": { "type": "string", "description": "Display name for this endpoint." },
-              "url": { "type": "string", "description": "Base URL for the PocketAI server." },
-              "model": { "type": "string", "default": "", "description": "Model ID to use with this endpoint. Leave empty to auto-detect." },
-              "reasoningEffort": { "type": "string", "default": "", "description": "Optional reasoning effort for endpoints that support it, such as the Codex Bridge." },
-              "maxTokens": { "type": "number", "default": 4096, "minimum": 128, "description": "Maximum completion tokens per reply for this endpoint." },
-              "systemPrompt": { "type": "string", "default": "You are a concise coding assistant inside VS Code.", "description": "System prompt for this endpoint." }
+              "name": {
+                "type": "string",
+                "description": "Display name for this endpoint."
+              },
+              "url": {
+                "type": "string",
+                "description": "Base URL for the PocketAI server."
+              },
+              "model": {
+                "type": "string",
+                "default": "",
+                "description": "Model ID to use with this endpoint. Leave empty to auto-detect."
+              },
+              "reasoningEffort": {
+                "type": "string",
+                "default": "",
+                "description": "Optional reasoning effort for endpoints that support it, such as the Codex Bridge."
+              },
+              "maxTokens": {
+                "type": "number",
+                "default": 4096,
+                "minimum": 128,
+                "description": "Maximum completion tokens per reply for this endpoint."
+              },
+              "systemPrompt": {
+                "type": "string",
+                "default": "You are a concise coding assistant inside VS Code.",
+                "description": "System prompt for this endpoint."
+              }
             }
           },
           "description": "List of PocketAI server endpoints with per-endpoint model, token, and prompt settings."
@@ -169,16 +206,23 @@
         },
         "pocketai.permissions": {
           "type": "object",
-          "default": { "allow": [], "deny": [] },
+          "default": {
+            "allow": [],
+            "deny": []
+          },
           "properties": {
             "allow": {
               "type": "array",
-              "items": { "type": "string" },
+              "items": {
+                "type": "string"
+              },
               "description": "Glob patterns for trusted tool calls, e.g. 'read_file(**)', 'run_command(npm run *)', 'run_command:safe(npm test)'"
             },
             "deny": {
               "type": "array",
-              "items": { "type": "string" },
+              "items": {
+                "type": "string"
+              },
               "description": "Glob patterns for denied tool calls, e.g. 'read_file(*.env)', 'run_command(rm *)', 'run_command:network(*)'"
             }
           },
@@ -225,13 +269,38 @@
           "items": {
             "type": "object",
             "properties": {
-              "name": { "type": "string", "description": "Unique name for this MCP server." },
-              "command": { "type": "string", "description": "Command to launch the MCP server (e.g. 'npx', 'uvx', 'node')." },
-              "args": { "type": "array", "items": { "type": "string" }, "description": "Arguments to pass to the command." },
-              "env": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Extra environment variables for the MCP server process." },
-              "enabled": { "type": "boolean", "default": true, "description": "Set to false to disable this server without removing it." }
+              "name": {
+                "type": "string",
+                "description": "Unique name for this MCP server."
+              },
+              "command": {
+                "type": "string",
+                "description": "Command to launch the MCP server (e.g. 'npx', 'uvx', 'node')."
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Arguments to pass to the command."
+              },
+              "env": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Extra environment variables for the MCP server process."
+              },
+              "enabled": {
+                "type": "boolean",
+                "default": true,
+                "description": "Set to false to disable this server without removing it."
+              }
             },
-            "required": ["name", "command"]
+            "required": [
+              "name",
+              "command"
+            ]
           },
           "description": "MCP (Model Context Protocol) servers to connect to. Each server provides additional tools via JSON-RPC over stdio."
         },
@@ -239,12 +308,42 @@
           "type": "object",
           "default": {},
           "properties": {
-            "postEdit": { "type": "array", "items": { "type": "string" } },
-            "postCreate": { "type": "array", "items": { "type": "string" } },
-            "preToolUse": { "type": "array", "items": { "type": "string" } },
-            "postToolUse": { "type": "array", "items": { "type": "string" } },
-            "onSessionStart": { "type": "array", "items": { "type": "string" } },
-            "onSessionEnd": { "type": "array", "items": { "type": "string" } }
+            "postEdit": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "postCreate": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "preToolUse": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "postToolUse": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "onSessionStart": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "onSessionEnd": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
           },
           "description": "Shell commands to run at lifecycle points. Supports ${file}, ${tool}, ${workspaceRoot} variables."
         }
@@ -274,15 +373,20 @@
     "opencode-bridge": "node ./scripts/opencode-openai-bridge.mjs",
     "build": "tsc --project tsconfig.json",
     "typecheck": "tsc --project tsconfig.json --noEmit",
+    "vscode:prepublish": "npm run build",
     "test": "npm run test:unit",
     "test:unit": "npm run build && node --test tests/*.test.cjs",
     "test:extension": "npm run build && node ./tests/run-extension-tests.cjs",
-    "test:all": "npm run test:unit && npm run test:extension"
+    "test:all": "npm run test:unit && npm run test:extension",
+    "package:check": "npm run build && vsce ls --no-dependencies",
+    "package:vsix": "vsce package --no-dependencies",
+    "release:check": "npm run typecheck && npm run test:all && npm run package:check && npm run package:vsix"
   },
   "devDependencies": {
-    "@types/node": "24.3.1",
-    "@types/vscode": "^1.96.0",
-    "@vscode/test-electron": "^2.5.2",
+    "@types/node": "20.19.43",
+    "@types/vscode": "1.96.0",
+    "@vscode/test-electron": "3.0.0",
+    "@vscode/vsce": "3.9.2",
     "typescript": "5.8.3"
   }
 }
